@@ -1,20 +1,17 @@
 from bunch import Bunch
 from typing import List
 from random import shuffle
-
+from maths import *
 
 if not 'google.colab' in sys.modules:
-  from core.maths import *
-  from core.util import *
-  from pytti.Perceptor.Prompt import parse_prompt, mask_image
-  from pathlib import Path
+    # from core.maths import *
+    # from core.util import *
+    # from pytti.Perceptor.Prompt import parse_prompt, mask_image
+    from pathlib import Path
 
 # Config ----------------------------------------
 TOTAL_DURATION = 60 * 5  # 5 minutes, counted in seconds
 RESOLUTION = 6  # Number of keyyframes in a second. Linear interpolation in-between
-
-# Assembled sets ----------------------------------------
-params = Bunch({})  # Dummy
 
 # Vis ----------------------------------------
 vis_font = r"/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
@@ -24,391 +21,361 @@ vis_display_min_significance = 0.115
 
 font = None
 
+# Baked Data ----------------------------------------
+bake_index = []
+
+
 
 class Keyframe:
-  def __init__(self):
-    self.time = 0
-    self.w = 0
+    def __init__(self):
+        self.time = 0
+        self.w = 0
+
 
 class PromptNode:
-  def __init__(self, text=None, wt=None, mask=None):
-    self.parent = None
-    self.children = []
-    self.text = text
-    self.weight = wt
-    self.stop = None
-    self.mask = mask
+    def __init__(self, text=None, wt=None, mask=None):
+        self.parent = None
+        self.children = []
+        self.text = text
+        self.weight = wt
+        self.stop = None
+        self.mask = mask
 
-    self.add = 0
-    self.scale = 1
+        # Modifiers
+        self.add = 0
+        self.scale = 1
 
-    self.timeline = None
-    self.min = 0
-    self.max = 0
-    self.w = 0 # The current weight, linked to the clip prompt
-    self.a = 0
-    self.b = 0
+        # Baking
+        self.index = None
+        self.w = None
+        self.timeline = None
+        self.min = 0
+        self.max = 0
+        self.a = 0
+        self.b = 0
 
-    self.nprompt = None  # The actual 'neural prompt' (PyTTI's Prompt class)
+        # The actual 'neural prompt' (PyTTI's Prompt class)
+        self.nprompt = None
 
-  def reset_state(self):
-    self.timeline = None
-    self.min = 0
-    self.max = 0
-    self.w = 0
-    self.a = 0
-    self.b = 0
+    def reset_bake(self):
+        self.timeline = None
+        self.min = 0
+        self.max = 0
+        self.w = 0
+        self.a = 0
+        self.b = 0
+        self.index = 0
 
-  def prepare_timeline(self):
-    self.reset_state()
-    self.timeline = []
+        self.timeline = []
 
-  def to_torch(self, tti):
-    self.nprompt = parse_prompt(tti.embedder, self.to_pytti())
-    self.nprompt.node = self
-    if self.mask is not None:
-      pilmask = gpil(self.mask)
-      print(f"set_mask ({pilmask})")
-      self.nprompt.set_mask(pilmask)
+    def get_text(self):
+        if isinstance(self.text, str):
+            return self.text
+        elif isinstance(self.text, list):
+            ret = ""
+            for token in self.text:
+                if isinstance(token, str):
+                    ret += token
+                elif isinstance(token, PromptNode):
+                    ret += token.get_text()
+            return ret
 
-    return self.nprompt
+        raise RuntimeError(f"Invalid PromptNode text: {self.text}")
 
-  def update_torch(self, tti):
-    global t, parametric_eval
-    global i
+    def get_lossy_scale(self):
+        scale = self.scale
 
-    if self.nprompt is not None:
-      # Aggregate parent scales
-      scale = self.scale
-      n = self.parent
-      while n is not None:
-        scale *= parametric_eval(n.scale)
-        n = n.parent
+        # Aggregate parent scales
+        n = self.parent
+        while n is not None:
+            scale *= parametric_eval(n.scale)
+            n = n.parent
 
-      self.nprompt.text = self.text
-      self.nprompt.weight = str(parametric_eval(self.weight) * scale)
-      if self.timeline is not None:
-        self.nprompt.text = self.text
-        self.nprompt.weight = str(parametric_eval(self.weight) * self.evaluate(t) * scale)
+        return scale
 
-    for n in self.children:
-      n.update_torch(tti)
+    def get_weight_at(self, t):
+        scale = self.get_lossy_scale()
+        if self.timeline is not None:
+            return parametric_eval(self.weight) * self.get_bake_at(t) * scale
 
-  def to_pytti(self):
-    if self.stop is None:
-      return f"{self.text}:{self.weight}"
-    else:
-      return f"{self.text}:{self.weight}:{self.stop}"
+        return parametric_eval(self.weight) * scale
 
-  def bake(self):
-    for n in self.children:
-      n.bake()
+    def get_bake_at(self, t):
+        if self.timeline is None:
+            raise RuntimeError(f"Cannot evaluate a PromptNode without timeline ({self.get_text()})")
 
-  def evaluate(self, t):
-    if self.timeline is None:
-      raise RuntimeError(f"Cannot evaluate a PromptNode without timeline ({self.text})")
+        # Interpolate smoothly between keyframes
+        idx = int(t * RESOLUTION)
+        idx = clamp(idx, 0, TOTAL_DURATION * RESOLUTION)
 
-    # Interpolate smoothly between keyframes
-    idx = int(t * RESOLUTION)
-    idx = clamp(idx, 0, TOTAL_DURATION * RESOLUTION)
+        last = self.timeline[idx]
+        next = self.timeline[idx + 1]  #
 
-    last = self.timeline[idx]
-    next = self.timeline[idx + 1]  #
+        frameStart = idx / RESOLUTION
+        interframe = (t - frameStart) / (1 / RESOLUTION)
 
-    frameStart = idx / RESOLUTION
-    interframe = (t - frameStart) / (1 / RESOLUTION)
+        return lerp(last, next, interframe)
 
-    return lerp(last, next, interframe)
+    def get_debug_string(self,
+                         t_length=10,
+                         t_timestep=0.5):
+        if self.timeline is not None:
+            t_values = []
+            for i in range(t_length):
+                t = i * t_timestep
+                t_values.append(self.evaluate(t))
 
-  def print(self,
-            t_length=10,
-            t_timestep=0.5,
-            depth=0):
-    s = ""
-    for i in range(depth): s += "   "
-    s += self.to_debug_string(t_length, t_timestep)
+            str_timeline = ["{:.1f}".format(v) for v in t_values]
+            return f"{', '.join(str_timeline)}"
+        else:
+            return f"{self.weight}"
 
-    print(s)
+    def print(self,
+              t_length=10,
+              t_timestep=0.5,
+              depth=0):
+        s = ""
+        for i in range(depth): s += "   "
+        s += self.to_debug_string(t_length, t_timestep)
 
-    for n in self.children:
-      n.print(t_length, t_timestep, depth + 1)
+        print(s)
 
-  def to_debug_string(self,
-                      t_length=10,
-                      t_timestep=0.5):
-    if self.timeline is not None:
-      t_values = []
-      for i in range(t_length):
-        t = i * t_timestep
-        t_values.append(self.evaluate(t))
-
-      str_timeline = ["{:.1f}".format(v) for v in t_values]
-      return f"{', '.join(str_timeline)}"
-    else:
-      return f"{self.weight}"
+        for n in self.children:
+            n.print(t_length, t_timestep, depth + 1)
 
 
-class PromptSet(PromptNode):
-  def __init__(self, *children):
-    super(PromptSet, self).__init__()
-    self.add_children(children)
+class PromptList(PromptNode):
+    def __init__(self, promptstr: str, scale=1, add=0, prefix='', suffix=''):
+        super(PromptList, self).__init__()
+        self.scale = scale
+        self.add = 0
 
-  def __iter__(self): return self.children.__iter__()
-  def __next__(self): return self.children.__next__()
-  # def __len__(self): return self.children.__len__()
-  # def __getitem__(self, k): return self.children.__getitem__(k)
-  # def __setitem__(self, k, v): return self.children.__setitem__(k, v)
-  # def __delitem__(self, k): return self.children.__delitem__(k)
-  # def __getslice__(self, i, j): return self.children.__getslice__(i, j)
-  # def __setslice__(self, i, j, s): return self.children.__setslice__(i, j, s)
-  # def __delslice__(self, i, j): return self.children.__delslice__(i, j)
-  # def __contains__(self, obj): return self.children.__contains__(obj)
+        if len(prefix) > 0: prefix = prefix + ' '
+        if len(suffix) > 0: suffix = ' ' + suffix
 
-  def to_debug_string(self,
-                      t_length=10,
-                      t_timestep=0.5):
-    return type(self).__name__
+        children = parse_promptlines(promptstr, prefix, suffix)
+        self.add_children(children)
 
-  def evaluate_prompt(self, id, t):
-    return self.children[id].evaluate(t)
+    def to_debug_string(self,
+                        t_length=10,
+                        t_timestep=0.5):
+        return type(self).__name__
 
-  def to_torch(self, tti):
-    return None
+    def evaluate(self, t):
+        raise RuntimeError(f"Cannot evaluate a PromptList ({self.get_text()})")
 
-  def to_pytti(self):
-    text = ""
-    for pmt in self.children:
-      text += pmt.to_pytti()
-      text += "|"
+    def add_child(self, node):
+        self.children.append(node)
+        node.parent = self
 
-    return text
+    def add_children(self, add):
+        if isinstance(add, str):
+            for p in PromptList(add):
+                self.add_child(p)
+        elif isinstance(add, list) or isinstance(add, tuple):
+            for p in add:
+                self.add_child(p)
+        elif isinstance(add, PromptNode):
+            self.add_child(add)
+        else:
+            raise RuntimeError(f"PromptList.__init__: Invalid input children nodes ({add})")
 
-  def add_child(self, node):
-    self.children.append(node)
-    node.parent = self
+    def __len__(self): return self.children.__len__()
 
-  def add_children(self, add):
-    if isinstance(add, str):
-      for p in PromptList(add):
-        self.add_child(p)
-    elif isinstance(add, list) or isinstance(add, tuple):
-      for p in add:
-        self.add_child(p)
-    elif isinstance(add, PromptNode):
-      self.add_child(add)
-    else:
-      raise RuntimeError(f"PromptSet.__init__: Invalid input children nodes ({add})")
+    def __getitem__(self, k): return self.children.__getitem__(k)
+
+    def __setitem__(self, k, v): return self.children.__setitem__(k, v)
+
+    def __delitem__(self, k): return self.children.__delitem__(k)
+
+    def __getslice__(self, i, j): return self.children.__getslice__(i, j)
+
+    def __setslice__(self, i, j, s): return self.children.__setslice__(i, j, s)
+
+    def __delslice__(self, i, j): return self.children.__delslice__(i, j)
+
+    def __contains__(self, obj): return self.children.__contains__(obj)
+
+    def __iter__(self): return self.children.__iter__()
+
+    def __next__(self): return self.children.__next__()
 
 
-class PromptList(PromptSet):
-  def __init__(self, promptstr: str, scale=1, add=0, prefix='', suffix=''):
-    super(PromptList, self).__init__()
-    self.scale = scale
-    self.add = 0
+class GlobalSet(PromptList):
+    def __init__(self, scale=1, add=0, prefix="", suffix="", **kwargs):
+        super(GlobalSet, self).__init__(*kwargs.values())
 
-    if len(prefix) > 0: prefix = prefix + ' '
-    if len(suffix) > 0: suffix = ' ' + suffix
+        self.scale = scale
+        self.add = add
+        self.prefix = prefix
+        self.suffix = suffix
 
-    w_max = 0
+        for k, v in kwargs.items():
+            globals()[k] = v
+        pass
 
-    for text in promptstr.splitlines():
-      if not text or not text.strip():
-        continue
 
-      text = text.strip()
+class ProportionSet(PromptList):
+    def __init__(self,
+                 children,
+                 period=None,
+                 proportion=None,
+                 drift=None,
+                 interpolation=0.95,
+                 scale=1,
+                 add=0,
+                 prefix="",
+                 suffix=""):
+        super(ProportionSet, self).__init__(*children)
+        self.children = children
 
-      # [weight] [text]
-      parts = text.split(' ')
-      weight = float(parts[0])
-      text = prefix + ' '.join(parts[1:]) + suffix
-      pmt = PromptNode(text, weight)
+        self.scale = scale
+        self.add = 0
+        self.prefix = prefix
+        self.suffix = suffix
 
-      w_max = max(w_max, weight)
+        if drift is None: drift = [0, 0.25]
+        if proportion is None: proportion = [0.75, 0.95]
+        if period is None: period = [15, 20]
 
-      self.add_child(pmt)
+        self.period = period
+        self.proportion = proportion
+        self.drift = drift
+        self.interpolation = interpolation
 
-    for p in self.children:
-      p.weight /= w_max
+    def bake(self):
+        totalSteps = TOTAL_DURATION * RESOLUTION
 
-class GlobalSet(PromptSet):
-  def __init__(self, scale=1, add=0, prefix="", suffix="", **kwargs):
-    super(GlobalSet, self).__init__(*kwargs.values())
+        for child in self.children:
+            child.prepare_timeline()
 
-    self.scale = scale
-    self.add = add
-    self.prefix = prefix
-    self.suffix = suffix
+        # CREATE THE KEYFRAMES BY STATE -------------------------------------------
+        states: List[List[Keyframe]] = []
 
-    for k, v in kwargs.items():
-      globals()[k] = v
+        # Prepare shuffled order
+        shuffled_children = list()
+        for i, node in enumerate(self.children):
+            node.index = i
+            shuffled_children.append(node)
+
+        time = 0
+        while time < totalSteps:
+            period = int(val_or_range(self.period) * RESOLUTION)
+            time += period
+
+            shuffle(shuffled_children)
+
+            keyframes: List[Keyframe] = [None] * len(shuffled_children)
+            w = 1
+            p = val_or_range(self.proportion)
+
+            if p >= 1:
+                print("WARNING: bake_proportion is >= 1")
+
+            for node in shuffled_children:
+                keyframe = Keyframe()
+                keyframe.w = w  # jcurve(w, 0.85)  # TODO make this not hardcoded
+                keyframe.time = time + int(val_or_range(self.drift) * period)
+
+                w *= p
+                keyframes[node.index] = keyframe
+
+            states.append(keyframes)
+
+        # BAKE THE TIMELINES ---------------------------------------------
+        lenStates = len(states)
+
+        for ipmt in range(len(self.children)):
+            for istate in range(lenStates):
+                node = self.children[ipmt]
+                timeline = node.timeline
+
+                if istate == lenStates - 1:
+                    while len(timeline) < totalSteps:
+                        timeline.append(node.w)
+                    break
+
+                kf0: Keyframe = states[istate][ipmt]
+                kf1: Keyframe = states[istate + 1][ipmt]
+
+                segment_duration = kf1.time - kf0.time
+
+                lmin = kf1.time - segment_duration * val_or_range(self.interpolation)  # Interpolation frames (100% interpolation otherwise with just np.time)
+                lmax = kf1.time
+
+                for i in range(kf0.time, kf1.time):
+                    t = ilerp(lmin, lmax, i)
+                    w = lerp(kf0.w, kf1.w, t)  # scurve(t)
+
+                    timeline.append(w)
+
+
+class SequenceSet(PromptList):
+    def __init__(self, children, scale=1, add=0, prefix='', suffix=''):
+        super(SequenceSet, self).__init__(*children)
+        self.children = children
+
+        self.scale = scale
+        self.add = 0
+
+        self.period = 10
+        self.interpolation = 0.25
+
+        if len(prefix) > 0: prefix = prefix + ' '
+        if len(suffix) > 0: suffix = ' ' + suffix
+
+    def bake(self):
+        # bake the timelines
+        totalSteps = TOTAL_DURATION * RESOLUTION
+
+        for child in self.children:
+            child.prepare_timeline()
+
+        # CREATE THE KEYFRAMES BY STATE -------------------------------------------
+
+        period = self.period  # Current period
+        index = -1  # Current prompt index
+        end = 0  # Current prompt end
+
+        for i in range(totalSteps):
+            # Advance the interpolations
+            for j, node in enumerate(self.children):
+                if i == end and j == index:  # End of the current scene, tween out
+                    node.min = i
+                    node.max = i + int(period * val_or_range(self.interpolation))
+                    node.a = node.w
+                    node.b = 0
+                    node.k = rng(0.4, 0.6)
+
+                # If we're still interpolating
+                if i <= node.max and node.max > 0:
+                    t = (i - node.min) / (node.max - node.min)
+                    w = lerp(node.a, node.b, t)
+
+                    node.w = w
+                    node.timeline.append(w)
+                else:
+                    node.timeline.append(node.w)  # Copy last w
+
+            # Advance the scene, tween in
+            if i == end:
+                period = int(val_or_range(self.period) * RESOLUTION)
+
+                index = (index + 1) % len(self.children)
+                end += period
+
+                node = self.children[index]
+                node.min = i
+                node.max = i + int(period * val_or_range(self.interpolation))
+                node.a = node.w
+                node.b = 1
+                node.k = rng(0.4, 0.6)
+
+
+class CurveSet(PromptList):
     pass
 
-
-class ProportionSet(PromptSet):
-  def __init__(self,
-               children,
-               period=None,
-               proportion=None,
-               drift=None,
-               interpolation=0.95,
-               scale=1,
-               add=0,
-               prefix="",
-               suffix=""):
-    super(ProportionSet, self).__init__(*children)
-    self.children = children
-
-    self.scale = scale
-    self.add = 0
-    self.prefix = prefix
-    self.suffix = suffix
-
-    if drift is None: drift = [0, 0.25]
-    if proportion is None: proportion = [0.75, 0.95]
-    if period is None: period = [15, 20]
-
-    self.period = period
-    self.proportion = proportion
-    self.drift = drift
-    self.interpolation = interpolation
-
-    self.bake()
-
-  def bake(self):
-    totalSteps = TOTAL_DURATION * RESOLUTION
-
-    for child in self.children.children:
-      child.prepare_timeline()
-
-    # CREATE THE KEYFRAMES BY STATE -------------------------------------------
-    states: List[List[Keyframe]] = []
-
-    # Prepare shuffled order
-    shuffled_children = list()
-    for i, node in enumerate(self.children.children):
-      node.index = i
-      shuffled_children.append(node)
-
-    time = 0
-    while time < totalSteps:
-      period = int(val_or_range(self.period) * RESOLUTION)
-      time += period
-
-      shuffle(shuffled_children)
-
-      keyframes:List[Keyframe] = [None] * len(shuffled_children)
-      w = 1
-      p = val_or_range(self.proportion)
-
-      if p >= 1:
-        print("WARNING: bake_proportion is >= 1")
-
-      for node in shuffled_children:
-        keyframe = Keyframe()
-        keyframe.w = w # jcurve(w, 0.85)  # TODO make this not hardcoded
-        keyframe.time = time + int(val_or_range(self.drift) * period)
-
-        w *= p
-        keyframes[node.index] = keyframe
-
-      states.append(keyframes)
-
-    # BAKE THE TIMELINES ---------------------------------------------
-    lenStates = len(states)
-
-    for ipmt in range(len(self.children.children)):
-      for istate in range(lenStates):
-        node = self.children.children[ipmt]
-        timeline = node.timeline
-
-        if istate == lenStates - 1:
-          while len(timeline) < totalSteps:
-            timeline.append(node.w)
-          break
-
-        kf0:Keyframe = states[istate][ipmt]
-        kf1:Keyframe = states[istate + 1][ipmt]
-
-        segment_duration = kf1.time - kf0.time
-
-        lmin = kf1.time - segment_duration * val_or_range(self.interpolation)  # Interpolation frames (100% interpolation otherwise with just np.time)
-        lmax = kf1.time
-
-        for i in range(kf0.time, kf1.time):
-          t = ilerp(lmin, lmax, i)
-          w = lerp(kf0.w, kf1.w, t)  # scurve(t)
-
-          timeline.append(w)
-
-
-class SequenceSet(PromptSet):
-  def __init__(self, children, scale=1, add=0, prefix='', suffix=''):
-    super(SequenceSet, self).__init__(*children)
-    self.children = children
-
-    self.scale = scale
-    self.add = 0
-
-    self.period = 10
-    self.interpolation = 0.25
-    self.children = children
-
-    if len(prefix) > 0: prefix = prefix + ' '
-    if len(suffix) > 0: suffix = ' ' + suffix
-
-    self.bake()
-
-  def bake(self):
-    # bake the timelines
-    totalSteps = TOTAL_DURATION * RESOLUTION
-
-    for child in self.children.children:
-      child.prepare_timeline()
-
-    # CREATE THE KEYFRAMES BY STATE -------------------------------------------
-
-    period = self.period  # Current period
-    index = -1  # Current prompt index
-    end = 0  # Current prompt end
-
-    for i in range(totalSteps):
-      # Advance the interpolations
-      for j, node in enumerate(self.children.children):
-        if i == end and j == index:  # End of the current scene, tween out
-          node.min = i
-          node.max = i + int(period * val_or_range(self.interpolation))
-          node.a = node.w
-          node.b = 0
-          node.k = rng(0.4, 0.6)
-
-        # If we're still interpolating
-        if i <= node.max and node.max > 0:
-          t = (i - node.min) / (node.max - node.min)
-          w = lerp(node.a, node.b, t)
-
-          node.w = w
-          node.timeline.append(w)
-        else:
-          node.timeline.append(node.w)  # Copy last w
-
-      # Advance the scene, tween in
-      if i == end:
-        period = int(val_or_range(self.period) * RESOLUTION)
-
-        index = (index + 1) % len(self.children.children)
-        end += period
-
-        node = self.children.children[index]
-        node.min = i
-        node.max = i + int(period * val_or_range(self.interpolation))
-        node.a = node.w
-        node.b = 1
-        node.k = rng(0.4, 0.6)
-
-
-class CurveSet(PromptSet):
-  pass
-
+# region Visualization
 # scenes = PromptList("""
 # 1 A lamborghini on the road leaving a trail of psychedelic fumes and smoke
 # 1 Huge megalithic rocks in the shape of human nose and ears
@@ -430,8 +397,6 @@ class CurveSet(PromptSet):
 # root.bake();
 # root.print(30, 2)
 
-
-# region Experimental stuff
 # def print_scene(scene):
 #   for i in range(TOTAL_DURATION * RESOLUTION):
 #     values = map(lambda x: x.timeline[i], scene.prompts)
@@ -543,3 +508,113 @@ class CurveSet(PromptSet):
 # a3 = scene_slice(sa, 0.0, 1.0)
 
 # endregion
+
+def bake(root: PromptNode):
+    global bake_index
+    bake_index = []
+
+    for v in dfs(root):
+        v.bake()
+        v.index = len(bake_index)
+        bake_index.append(v)
+
+        yield v
+
+
+# The function to be used by the baked prompts for their weight
+# Will query the bake_index and evaluate the relevant promptnode
+def evaluate_node(index, t):
+    global bake_index
+    return bake_index[index].get_weight_at(t)
+
+
+def dfs(node):
+    stack = list(node)
+
+    while len(stack) > 0:
+        n = stack.pop()
+
+        yield n
+
+        for child in n.children:
+            stack.append(child)
+
+
+def parse_promptlines(promptstr, prefix='', suffix=''):
+    w_max = 0
+    ret = []
+
+
+    for text in promptstr.splitlines():
+        if not text or not text.strip():
+            continue
+
+        text = text.strip()
+
+        # [weight] [text]
+        parts = text.split(' ')
+        weight = float(parts[0])
+        text = prefix + ' '.join(parts[1:]) + suffix
+
+        # Split the text and interpret each token
+        # Example text: "Aerial shot of __________ mountains by Dan Hillier, drawn with psychedelic white ink on black paper"
+        tokens = text.split(' ')
+
+
+        pmt = PromptNode(text, weight)
+
+        w_max = max(w_max, weight)
+
+        ret.append(pmt)
+
+    # Normalize weights
+    for p in ret:
+        p.weight /= w_max
+
+    return ret, w_max
+
+
+# region Disco
+
+#   {
+#    0:"Aerial shot of scenic meadows and mountains by Dan Hillier, drawn with psychedelic white ink on black paper:evaluate_node:i"
+#   }
+def bake_disco(root: PromptNode):
+    dd_prompts = []
+    for v in bake(root):
+        dd_prompts.append(f'{v.get_text()}:evaluate_node:{v.index}')
+
+    return {0: dd_prompts}
+
+
+# endregion
+
+
+# region PyTTI
+
+# def to_pytti_object(self, tti):
+#     self.nprompt = parse_prompt(tti.embedder, self.to_pytti())
+#     self.nprompt.node = self
+#     if self.mask is not None:
+#         pilmask = gpil(self.mask)
+#         print(f"set_mask ({pilmask})")
+#         self.nprompt.set_mask(pilmask)
+#
+#     return self.nprompt
+#
+#
+# def update_pytti(self, t):
+#     if self.nprompt is not None:
+#         self.nprompt.text = self.get_text()
+#         self.nprompt.weight = str(self.get_weight_at(t))
+#
+#
+# def to_pytti(self):
+#     if self.stop is None:
+#         return f"{self.get_text()}:{self.weight}"
+#     else:
+#         return f"{self.get_text()}:{self.weight}:{self.stop}"
+#
+
+# endregion
+
