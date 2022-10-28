@@ -2,10 +2,6 @@
 
 A collection of libraries and scripts to take PyTTI, Disco Diffusion, Deforum, etc. to the next level.
 
-## Ryusig
-
-![The ryusig graphing calculator](ryusig.png)
-
 ## pnodes.py
 
 This script offers a new system to baking prompts and weights using a network of composable nodes.
