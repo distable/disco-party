@@ -1,17 +1,18 @@
+from operator import attrgetter, itemgetter
+
 from bunch import Bunch
 from typing import List
 from random import shuffle
 from maths import *
+from pathlib import Path
 
 if not 'google.colab' in sys.modules:
+    pass
     # from core.maths import *
     # from core.util import *
     # from pytti.Perceptor.Prompt import parse_prompt, mask_image
-    from pathlib import Path
 
 # Config ----------------------------------------
-TOTAL_DURATION = 60 * 5  # 5 minutes, counted in seconds
-RESOLUTION = 6  # Number of keyyframes in a second. Linear interpolation in-between
 
 # Vis ----------------------------------------
 vis_font = r"/usr/share/fonts/truetype/liberation/LiberationMono-Regular.ttf"
@@ -25,7 +26,6 @@ font = None
 bake_index = []
 
 
-
 class Keyframe:
     def __init__(self):
         self.time = 0
@@ -33,7 +33,7 @@ class Keyframe:
 
 
 class PromptNode:
-    def __init__(self, text=None, wt=None, mask=None):
+    def __init__(self, text=None, wt=1, mask=None):
         self.parent = None
         self.children = []
         self.text = text
@@ -47,7 +47,7 @@ class PromptNode:
 
         # Baking
         self.index = None
-        self.w = None
+        self.w = 1
         self.timeline = None
         self.min = 0
         self.max = 0
@@ -105,16 +105,19 @@ class PromptNode:
             raise RuntimeError(f"Cannot evaluate a PromptNode without timeline ({self.get_text()})")
 
         # Interpolate smoothly between keyframes
-        idx = int(t * RESOLUTION)
-        idx = clamp(idx, 0, TOTAL_DURATION * RESOLUTION)
+        idx = int(t * resolution)
+        idx = clamp(idx, 0, max_duration * resolution)
 
         last = self.timeline[idx]
         next = self.timeline[idx + 1]  #
 
-        frameStart = idx / RESOLUTION
-        interframe = (t - frameStart) / (1 / RESOLUTION)
+        frameStart = idx / resolution
+        interframe = (t - frameStart) / (1 / resolution)
 
         return lerp(last, next, interframe)
+
+    def bake(self):
+        pass
 
     def get_debug_string(self,
                          t_length=10,
@@ -145,16 +148,24 @@ class PromptNode:
 
 
 class PromptList(PromptNode):
-    def __init__(self, promptstr: str, scale=1, add=0, prefix='', suffix=''):
+    def __init__(self, children: object = None, scale: float = 1, add: float = 0, prefix: str = '', suffix: str = ''):
         super(PromptList, self).__init__()
         self.scale = scale
         self.add = 0
 
-        if len(prefix) > 0: prefix = prefix + ' '
-        if len(suffix) > 0: suffix = ' ' + suffix
+        if children is not None:
+            if isinstance(children, list):
+                self.add_children(children)
+            elif isinstance(children, str):
+                if len(prefix) > 0: prefix = prefix + ' '
+                if len(suffix) > 0: suffix = ' ' + suffix
 
-        children = parse_promptlines(promptstr, prefix, suffix)
-        self.add_children(children)
+                children, _ = parse_promptlines(children, prefix, suffix)
+
+                self.add_children(children)
+            else:
+                children.parent = self
+                self.children = children
 
     def to_debug_string(self,
                         t_length=10,
@@ -202,13 +213,8 @@ class PromptList(PromptNode):
 
 
 class GlobalSet(PromptList):
-    def __init__(self, scale=1, add=0, prefix="", suffix="", **kwargs):
-        super(GlobalSet, self).__init__(*kwargs.values())
-
-        self.scale = scale
-        self.add = add
-        self.prefix = prefix
-        self.suffix = suffix
+    def __init__(self, scale: float = 1, add: float = 0, prefix: str = "", suffix: str = "", **kwargs: object):
+        super(GlobalSet, self).__init__(children=[x for x in kwargs.values()], add=add, scale=scale, prefix=prefix, suffix=suffix)
 
         for k, v in kwargs.items():
             globals()[k] = v
@@ -218,21 +224,15 @@ class GlobalSet(PromptList):
 class ProportionSet(PromptList):
     def __init__(self,
                  children,
-                 period=None,
-                 proportion=None,
-                 drift=None,
-                 interpolation=0.95,
-                 scale=1,
-                 add=0,
-                 prefix="",
-                 suffix=""):
-        super(ProportionSet, self).__init__(*children)
-        self.children = children
-
-        self.scale = scale
-        self.add = 0
-        self.prefix = prefix
-        self.suffix = suffix
+                 period: float = None,
+                 proportion: float = None,
+                 drift: float = None,
+                 interpolation: float = 0.95,
+                 scale: float = 1,
+                 add: float = 0,
+                 prefix: str = "",
+                 suffix: str = ""):
+        super(ProportionSet, self).__init__(children=children, scale=scale, add=add, prefix=prefix, suffix=suffix)
 
         if drift is None: drift = [0, 0.25]
         if proportion is None: proportion = [0.75, 0.95]
@@ -244,10 +244,10 @@ class ProportionSet(PromptList):
         self.interpolation = interpolation
 
     def bake(self):
-        totalSteps = TOTAL_DURATION * RESOLUTION
+        totalSteps = max_duration * resolution
 
         for child in self.children:
-            child.prepare_timeline()
+            child.reset_bake()
 
         # CREATE THE KEYFRAMES BY STATE -------------------------------------------
         states: List[List[Keyframe]] = []
@@ -260,7 +260,7 @@ class ProportionSet(PromptList):
 
         time = 0
         while time < totalSteps:
-            period = int(val_or_range(self.period) * RESOLUTION)
+            period = int(val_or_range(self.period) * resolution)
             time += period
 
             shuffle(shuffled_children)
@@ -312,11 +312,8 @@ class ProportionSet(PromptList):
 
 class SequenceSet(PromptList):
     def __init__(self, children, scale=1, add=0, prefix='', suffix=''):
-        super(SequenceSet, self).__init__(*children)
+        super(SequenceSet, self).__init__(children, scale=scale, add=add, prefix=prefix, suffix=suffix)
         self.children = children
-
-        self.scale = scale
-        self.add = 0
 
         self.period = 10
         self.interpolation = 0.25
@@ -326,10 +323,10 @@ class SequenceSet(PromptList):
 
     def bake(self):
         # bake the timelines
-        totalSteps = TOTAL_DURATION * RESOLUTION
+        totalSteps = max_duration * resolution
 
         for child in self.children:
-            child.prepare_timeline()
+            child.reset_bake()
 
         # CREATE THE KEYFRAMES BY STATE -------------------------------------------
 
@@ -359,7 +356,7 @@ class SequenceSet(PromptList):
 
             # Advance the scene, tween in
             if i == end:
-                period = int(val_or_range(self.period) * RESOLUTION)
+                period = int(val_or_range(self.period) * resolution)
 
                 index = (index + 1) % len(self.children)
                 end += period
@@ -374,6 +371,7 @@ class SequenceSet(PromptList):
 
 class CurveSet(PromptList):
     pass
+
 
 # region Visualization
 # scenes = PromptList("""
@@ -398,7 +396,7 @@ class CurveSet(PromptList):
 # root.print(30, 2)
 
 # def print_scene(scene):
-#   for i in range(TOTAL_DURATION * RESOLUTION):
+#   for i in range(max_duration * resolution):
 #     values = map(lambda x: x.timeline[i], scene.prompts)
 #     parts = map(lambda x: f'{x: .2f}', values)
 #     str = ', '.join(parts)
@@ -461,7 +459,7 @@ class CurveSet(PromptList):
 #   for j in range(len(prompt_timelines) - 1):
 #     s = params.steps_per_frame * i
 #     t = s / (params.frames_per_second * params.steps_per_frame)
-#     idx = int(t * RESOLUTION)
+#     idx = int(t * resolution)
 #
 #     t = prompt_strings[j]
 #     w = prompt_timelines[j][idx]
@@ -509,11 +507,11 @@ class CurveSet(PromptList):
 
 # endregion
 
-def bake(root: PromptNode):
+def bake(r):
     global bake_index
     bake_index = []
 
-    for v in dfs(root):
+    for v in dfs(r):
         v.bake()
         v.index = len(bake_index)
         bake_index.append(v)
@@ -544,7 +542,6 @@ def parse_promptlines(promptstr, prefix='', suffix=''):
     w_max = 0
     ret = []
 
-
     for text in promptstr.splitlines():
         if not text or not text.strip():
             continue
@@ -559,12 +556,8 @@ def parse_promptlines(promptstr, prefix='', suffix=''):
         # Split the text and interpret each token
         # Example text: "Aerial shot of __________ mountains by Dan Hillier, drawn with psychedelic white ink on black paper"
         tokens = text.split(' ')
-
-
         pmt = PromptNode(text, weight)
-
         w_max = max(w_max, weight)
-
         ret.append(pmt)
 
     # Normalize weights
@@ -617,4 +610,3 @@ def bake_disco(root: PromptNode):
 #
 
 # endregion
-
