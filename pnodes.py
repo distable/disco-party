@@ -3,7 +3,7 @@ from operator import attrgetter, itemgetter
 from bunch import Bunch
 from typing import List
 from random import shuffle
-from maths import *
+from .maths import *
 from pathlib import Path
 
 if not 'google.colab' in sys.modules:

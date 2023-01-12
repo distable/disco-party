@@ -12,7 +12,7 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 from scipy.ndimage import uniform_filter1d
 from numpy import ndarray
-from globals import *
+from .globals import *
 
 # import pytti
 simplex = OpenSimplex(random.randint(-999999, 9999999))
@@ -37,10 +37,15 @@ def update_math_env(k, v):
     # math_env = {'abs': abs, 'max': max, 'min': min, 'pow': pow, 'round': round, '__builtins__': None}
     # math_env.update({key: getattr(math, key) for key in dir(math) if '_' not in key})
 
+SEED_MAX = 2 ** 32 - 1
 
 def set_seed(seed=None):
     if seed is None:
         seed = int(time.time())
+    elif isinstance(seed, str):
+        seed = str_to_seed(seed)
+
+    seed = seed % SEED_MAX
 
     global simplex
     global current_seed
@@ -50,6 +55,14 @@ def set_seed(seed=None):
     random.seed(seed)
     torch.manual_seed(seed)
     np.random.seed(seed)
+
+
+def str_to_seed(seed):
+    import hashlib
+    seed = hashlib.sha1(seed.encode('utf-8'))
+    seed = int(seed.hexdigest(), 16)
+    seed = seed % SEED_MAX
+    return seed
 
 
 def parametric_eval(string, **kwargs):
@@ -229,7 +242,7 @@ def perlin(t, freq=0.8):
 def npperlin(count, freq=1, off=0):
     ret = np.zeros(count)
     for i in range(count):
-        ret[i] = perlin(i+off, freq)
+        ret[i] = perlin(i + off, freq)
     return ret
 
 
@@ -317,8 +330,8 @@ def schedule_spk(v, t):
     return sum
 
 
-def schedule(v):
-    return v[f % len(v)]
+def schedule(*args):
+    return args[f % len(args)]
 
 
 def pdiff(x):
@@ -327,9 +340,10 @@ def pdiff(x):
 
     return v
 
+
 def pconvolve(x, kernel):
     v = np.convolve(x, kernel)
-    return v[:-(len(kernel)-1)]
+    return v[:-(len(kernel) - 1)]
 
 
 def symnorm(x, window=None):
@@ -408,7 +422,6 @@ def smooth_1euro(x):
         x_hat[i] = one_euro_filter(t[i], x_noisy[i])
 
     return x_hat
-
 
 
 def smoothing_factor(t_e, cutoff):
