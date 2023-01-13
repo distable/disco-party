@@ -57,6 +57,9 @@ class PromptNode:
         # The actual 'neural prompt' (PyTTI's Prompt class)
         self.nprompt = None
 
+    def __str__(self):
+        return f"{type(self).__name__}({self.text})"
+
     def reset_bake(self):
         self.timeline = None
         self.min = 0
@@ -68,7 +71,7 @@ class PromptNode:
 
         self.timeline = []
 
-    def get_text(self):
+    def eval_text(self, t):
         if isinstance(self.text, str):
             return self.text
         elif isinstance(self.text, list):
@@ -77,7 +80,7 @@ class PromptNode:
                 if isinstance(token, str):
                     ret += token
                 elif isinstance(token, PromptNode):
-                    ret += token.get_text()
+                    ret += token.eval_text(t)
             return ret
 
         raise RuntimeError(f"Invalid PromptNode text: {self.text}")
@@ -102,7 +105,7 @@ class PromptNode:
 
     def get_bake_at(self, t):
         if self.timeline is None:
-            raise RuntimeError(f"Cannot evaluate a PromptNode without timeline ({self.get_text()})")
+            raise RuntimeError(f"Cannot evaluate a PromptNode without timeline ({self.eval_text(t)})")
 
         # Interpolate smoothly between keyframes
         idx = int(t * resolution)
@@ -126,12 +129,12 @@ class PromptNode:
             t_values = []
             for i in range(t_length):
                 t = i * t_timestep
-                t_values.append(self.evaluate(t))
+                t_values.append(self.get_bake_at(t))
 
-            str_timeline = ["{:.1f}".format(v) for v in t_values]
-            return f"{', '.join(str_timeline)}"
+            str_timeline = [f"{v:.1f}" for v in t_values]
+            return f"{self.text}: {', '.join(str_timeline)}"
         else:
-            return f"{self.weight}"
+            return f"{self.weight} NOBAKE"
 
     def print(self,
               t_length=10,
@@ -139,7 +142,7 @@ class PromptNode:
               depth=0):
         s = ""
         for i in range(depth): s += "   "
-        s += self.to_debug_string(t_length, t_timestep)
+        s += self.get_debug_string(t_length, t_timestep)
 
         print(s)
 
@@ -152,28 +155,24 @@ class PromptList(PromptNode):
         super(PromptList, self).__init__()
         self.scale = scale
         self.add = 0
-
+        self.children = []
         if children is not None:
-            if isinstance(children, list):
-                self.add_children(children)
-            elif isinstance(children, str):
-                if len(prefix) > 0: prefix = prefix + ' '
-                if len(suffix) > 0: suffix = ' ' + suffix
+            self.add_children(children)
 
-                children, _ = parse_promptlines(children, prefix, suffix)
+    def get_debug_string(self,
+                         t_length=10,
+                         t_timestep=0.5):
+        return f"PromptList({len(self.children)} children)"
 
-                self.add_children(children)
-            else:
-                children.parent = self
-                self.children = children
+    def eval_text(self, t):
+        children_by_w = sorted(self.children, key=lambda n: n.get_weight_at(t), reverse=True)
+        top = children_by_w[0]
+        # print(f"PromptList.eval_text: top={top.eval_text(t)}", [n.get_weight_at(t) for n in children_by_w])
+        return top.eval_text(t)
 
-    def to_debug_string(self,
-                        t_length=10,
-                        t_timestep=0.5):
-        return type(self).__name__
 
     def evaluate(self, t):
-        raise RuntimeError(f"Cannot evaluate a PromptList ({self.get_text()})")
+        raise RuntimeError(f"Cannot evaluate a PromptList ({self.eval_text(t)})")
 
     def add_child(self, node):
         self.children.append(node)
@@ -181,15 +180,25 @@ class PromptList(PromptNode):
 
     def add_children(self, add):
         if isinstance(add, str):
-            for p in PromptList(add):
-                self.add_child(p)
+            # if len(prefix) > 0: prefix = prefix + ' '
+            # if len(suffix) > 0: suffix = ' ' + suffix
+
+            children, _ = parse_promptlines(add)
+            self.add_children(children)
         elif isinstance(add, list) or isinstance(add, tuple):
             for p in add:
                 self.add_child(p)
         elif isinstance(add, PromptNode):
             self.add_child(add)
+        elif isinstance(add, PromptList):
+            for n in add.children:
+                self.add_child(n)
         else:
-            raise RuntimeError(f"PromptList.__init__: Invalid input children nodes ({add})")
+            raise RuntimeError(f"PromptList.add_children: Invalid input children nodes type {type(add)}")
+
+    def bake(self):
+        for n in self.children:
+            n.bake()
 
     def __len__(self): return self.children.__len__()
 
@@ -224,24 +233,31 @@ class GlobalSet(PromptList):
 class ProportionSet(PromptList):
     def __init__(self,
                  children,
-                 period: float = None,
-                 proportion: float = None,
-                 drift: float = None,
-                 interpolation: float = 0.95,
-                 scale: float = 1,
-                 add: float = 0,
+                 width: float | tuple[float, float] = None,
+                 p: float | tuple[float, float] = None,
+                 drift: float | tuple[float, float] = None,
+                 lerp: float | tuple[float, float] = 0.95,
+                 scale: float | tuple[float, float] = 1,
+                 add: float | tuple[float, float] = 0,
+                 curve=None,
                  prefix: str = "",
                  suffix: str = ""):
         super(ProportionSet, self).__init__(children=children, scale=scale, add=add, prefix=prefix, suffix=suffix)
 
         if drift is None: drift = [0, 0.25]
-        if proportion is None: proportion = [0.75, 0.95]
-        if period is None: period = [15, 20]
+        if p is None: p = [0.75, 0.95]
+        if width is None: width = [15, 20]
 
-        self.period = period
-        self.proportion = proportion
+        self.period = width
+        self.proportion = p
         self.drift = drift
-        self.interpolation = interpolation
+        self.interpolation = lerp
+        self.curve = curve
+
+    def get_debug_string(self,
+                         t_length=10,
+                         t_timestep=0.5):
+        return f"ProportionSet({len(self.children)} children)"
 
     def bake(self):
         totalSteps = max_duration * resolution
@@ -305,21 +321,28 @@ class ProportionSet(PromptList):
 
                 for i in range(kf0.time, kf1.time):
                     t = ilerp(lmin, lmax, i)
-                    w = lerp(kf0.w, kf1.w, t)  # scurve(t)
+
+                    curve = self.curve or lerp
+                    w = curve(kf0.w, kf1.w, t)
 
                     timeline.append(w)
 
 
 class SequenceSet(PromptList):
-    def __init__(self, children, scale=1, add=0, prefix='', suffix=''):
+    def __init__(self, children, width=10, lerp=0.25, scale=1, add=0, prefix='', suffix=''):
         super(SequenceSet, self).__init__(children, scale=scale, add=add, prefix=prefix, suffix=suffix)
         self.children = children
 
-        self.period = 10
-        self.interpolation = 0.25
+        self.width = width
+        self.lerp = lerp
 
         if len(prefix) > 0: prefix = prefix + ' '
         if len(suffix) > 0: suffix = ' ' + suffix
+
+    def get_debug_string(self,
+                         t_length=10,
+                         t_timestep=0.5):
+        return f"SequenceSet({len(self.children)} children)"
 
     def bake(self):
         # bake the timelines
@@ -330,7 +353,7 @@ class SequenceSet(PromptList):
 
         # CREATE THE KEYFRAMES BY STATE -------------------------------------------
 
-        period = self.period  # Current period
+        period = self.width  # Current period
         index = -1  # Current prompt index
         end = 0  # Current prompt end
 
@@ -339,7 +362,7 @@ class SequenceSet(PromptList):
             for j, node in enumerate(self.children):
                 if i == end and j == index:  # End of the current scene, tween out
                     node.min = i
-                    node.max = i + int(period * val_or_range(self.interpolation))
+                    node.max = i + int(period * val_or_range(self.lerp))
                     node.a = node.w
                     node.b = 0
                     node.k = rng(0.4, 0.6)
@@ -356,14 +379,14 @@ class SequenceSet(PromptList):
 
             # Advance the scene, tween in
             if i == end:
-                period = int(val_or_range(self.period) * resolution)
+                period = int(val_or_range(self.width) * resolution)
 
                 index = (index + 1) % len(self.children)
                 end += period
 
                 node = self.children[index]
                 node.min = i
-                node.max = i + int(period * val_or_range(self.interpolation))
+                node.max = i + int(period * val_or_range(self.lerp))
                 node.a = node.w
                 node.b = 1
                 node.k = rng(0.4, 0.6)
@@ -371,6 +394,34 @@ class SequenceSet(PromptList):
 
 class CurveSet(PromptList):
     pass
+
+
+class PromptWords(PromptList):
+    def __init__(self, words, scale=1, add=0, prefix='', suffix=''):
+        words = words.split(' ')
+        words = [f'1.0 {prefix}{word}{suffix}' for word in words]
+        s = '\n'.join(words)
+
+        super(PromptWords, self).__init__(s, scale=scale, add=add)
+
+
+    def get_debug_string(self,
+                         t_length=10,
+                         t_timestep=0.5):
+        return f"PromptWords({len(self.children)} children)"
+
+
+class PromptPhrases(PromptList):
+    def __init__(self, phrases, scale=1, add=0, prefix='', suffix=''):
+        phrases = phrases.split('\n')
+        phrases = [f'1.0 {prefix}{phrase}{suffix}' for phrase in phrases]
+        s = '\n'.join(phrases)
+        super(PromptPhrases, self).__init__(s, scale=scale, add=add)
+
+    def get_debug_string(self,
+                         t_length=10,
+                         t_timestep=0.5):
+        return f"PromptPhrases({len(self.children)} children)"
 
 
 # region Visualization
@@ -507,16 +558,21 @@ class CurveSet(PromptList):
 
 # endregion
 
-def bake(r):
+def bake(root):
     global bake_index
     bake_index = []
+    ret = []
 
-    for v in dfs(r):
+    for v in dfs(root):
         v.bake()
         v.index = len(bake_index)
         bake_index.append(v)
 
-        yield v
+        # v.print()
+
+        ret.append(v)
+
+    return ret
 
 
 # The function to be used by the baked prompts for their weight
@@ -551,7 +607,7 @@ def parse_promptlines(promptstr, prefix='', suffix=''):
         # [weight] [text]
         parts = text.split(' ')
         weight = float(parts[0])
-        text = prefix + ' '.join(parts[1:]) + suffix
+        text = f"{prefix}{' '.join(parts[1:])}{suffix}"
 
         # Split the text and interpret each token
         # Example text: "Aerial shot of __________ mountains by Dan Hillier, drawn with psychedelic white ink on black paper"
@@ -567,6 +623,76 @@ def parse_promptlines(promptstr, prefix='', suffix=''):
     return ret, w_max
 
 
+# bake_prompt(f"{scene} with black <a_penumbra> distance fog. Everything is ultra detailed, has 3D overlapping depth effect, into the center, painted with neon reflective/metallic/glowing ink, covered in <a_gem> <a_gem2> gemstone / <n_gem> ornaments, <a_light> light diffraction, (vibrant and colorful colors), {style}, painted with (acrylic)", settypes, setmap, locals())
+all_prompt_nodes = []
+
+
+def bake_prompt(prompt: str, confdefaults, lookup):
+    import re
+    import copy
+    all = []
+
+    # Match map \<\w+\>
+    matches = [None]
+    while len(matches) > 0:
+        matches = re.findall(r'(\<(\w+)(:(\w+))?\>)', prompt)
+        for match in matches:
+            full = match[0]
+            setname = match[1]
+            confname = None
+
+            set = lookup.get(setname)
+            conf = None
+
+            if len(match) >= 2:
+                colon = match[2]
+                confname = match[3]
+                conf = lookup.get(confname)
+
+            if setname in confdefaults:
+                conf = confdefaults[setname]
+                if isinstance(conf, list):
+                    conf = choose(conf)
+                # print('chose', conf)
+
+            if conf is None: raise Exception(f"Couldn't get conf: {confname}")
+            if set is None: raise Exception(f"Couldn't get set: {setname}")
+
+            # print('append', set, conf, setname, confname)
+            v = copy.copy(conf)
+            v.children = copy.deepcopy(set)
+
+            all.append(v)
+            prompt = prompt.replace(full, "STUB", 1)
+
+    global all_prompt_nodes
+    all_prompt_nodes = all
+
+    root = PromptList(all)
+    bake(root)
+    return root
+
+
+def eval_prompt(prompt: str, t):
+    import re
+    import copy
+
+    # Match all \<\w+\>
+    i = 0
+    matches = [None]
+    while len(matches) > 0:
+        matches = re.findall(r'(\<(\w+)(:(\w+))?\>)', prompt)
+        for match in matches:
+            if len(all_prompt_nodes) <= i:
+                raise Exception(f"Couldn't find prompt node at {i}")
+
+            node = all_prompt_nodes[i]
+            prompt = prompt.replace(match[0], node.eval_text(t), 1)
+            i += 1
+
+    return prompt
+
+
 # region Disco
 
 #   {
@@ -575,7 +701,7 @@ def parse_promptlines(promptstr, prefix='', suffix=''):
 def bake_disco(root: PromptNode):
     dd_prompts = []
     for v in bake(root):
-        dd_prompts.append(f'{v.get_text()}:evaluate_node:{v.index}')
+        dd_prompts.append(f'{v.eval_text()}:evaluate_node:{v.index}')
 
     return {0: dd_prompts}
 
@@ -584,6 +710,7 @@ def bake_disco(root: PromptNode):
 
 
 # region PyTTI
+
 
 # def to_pytti_object(self, tti):
 #     self.nprompt = parse_prompt(tti.embedder, self.to_pytti())
@@ -598,15 +725,15 @@ def bake_disco(root: PromptNode):
 #
 # def update_pytti(self, t):
 #     if self.nprompt is not None:
-#         self.nprompt.text = self.get_text()
+#         self.nprompt.text = self.eval_text()
 #         self.nprompt.weight = str(self.get_weight_at(t))
 #
 #
 # def to_pytti(self):
 #     if self.stop is None:
-#         return f"{self.get_text()}:{self.weight}"
+#         return f"{self.eval_text()}:{self.weight}"
 #     else:
-#         return f"{self.get_text()}:{self.weight}:{self.stop}"
+#         return f"{self.eval_text()}:{self.weight}:{self.stop}"
 #
 
 # endregion
