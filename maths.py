@@ -46,6 +46,7 @@ def set_seed(seed=None):
         seed = str_to_seed(seed)
 
     seed = seed % SEED_MAX
+    seed = int(seed)
 
     global simplex
     global current_seed
