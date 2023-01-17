@@ -398,7 +398,11 @@ class CurveSet(PromptList):
 
 class PromptWords(PromptList):
     def __init__(self, words, scale=1, add=0, prefix='', suffix=''):
-        words = words.split(' ')
+        if ',' in words:
+            words = words.split(',')
+        else:
+            words = words.split(' ')
+
         words = [f'1.0 {prefix}{word}{suffix}' for word in words]
         s = '\n'.join(words)
 
@@ -632,10 +636,14 @@ def bake_prompt(prompt: str, confdefaults, lookup):
     import copy
     all = []
 
+    prompt = prompt.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+    prompt = prompt.strip()
+
     # Match map \<\w+\>
     matches = [None]
     while len(matches) > 0:
         matches = re.findall(r'(\<(\w+)(:(\w+))?\>)', prompt)
+        print("MATCHES", matches)
         for match in matches:
             full = match[0]
             setname = match[1]
@@ -649,11 +657,9 @@ def bake_prompt(prompt: str, confdefaults, lookup):
                 confname = match[3]
                 conf = lookup.get(confname)
 
-            if setname in confdefaults:
-                conf = confdefaults[setname]
-                if isinstance(conf, list):
-                    conf = choose(conf)
-                # print('chose', conf)
+            conf = confdefaults.get(setname) or confdefaults.get('*')
+            if isinstance(conf, list):
+                conf = choose(conf)
 
             if conf is None: raise Exception(f"Couldn't get conf: {confname}")
             if set is None: raise Exception(f"Couldn't get set: {setname}")
@@ -677,6 +683,9 @@ def eval_prompt(prompt: str, t):
     import re
     import copy
 
+    prompt = prompt.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+    prompt = prompt.strip()
+
     # Match all \<\w+\>
     i = 0
     matches = [None]
@@ -684,7 +693,7 @@ def eval_prompt(prompt: str, t):
         matches = re.findall(r'(\<(\w+)(:(\w+))?\>)', prompt)
         for match in matches:
             if len(all_prompt_nodes) <= i:
-                raise Exception(f"Couldn't find prompt node at {i}")
+                raise Exception(f"Couldn't find prompt node at {i} (all={all_prompt_nodes})")
 
             node = all_prompt_nodes[i]
             prompt = prompt.replace(match[0], node.eval_text(t), 1)
