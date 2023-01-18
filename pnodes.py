@@ -643,7 +643,7 @@ def bake_prompt(prompt: str, confdefaults, lookup):
     matches = [None]
     while len(matches) > 0:
         matches = re.findall(r'(\<(\w+)(:(\w+))?\>)', prompt)
-        print("MATCHES", matches)
+        # print("MATCHES", matches)
         for match in matches:
             full = match[0]
             setname = match[1]
