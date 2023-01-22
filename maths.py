@@ -37,25 +37,36 @@ def update_math_env(k, v):
     # math_env = {'abs': abs, 'max': max, 'min': min, 'pow': pow, 'round': round, '__builtins__': None}
     # math_env.update({key: getattr(math, key) for key in dir(math) if '_' not in key})
 
+
 SEED_MAX = 2 ** 32 - 1
 
-def set_seed(seed=None):
-    if seed is None:
-        seed = int(time.time())
-    elif isinstance(seed, str):
-        seed = str_to_seed(seed)
+cached_simplex = {}
 
-    seed = seed % SEED_MAX
-    seed = int(seed)
-
-    global simplex
-    global current_seed
-
-    current_seed = seed
-    simplex = OpenSimplex(seed)
-    random.seed(seed)
-    torch.manual_seed(seed)
-    np.random.seed(seed)
+def set_seed(seed=None, with_torch=True):
+    # if seed is None:
+    #     seed = int(time.time())
+    # elif isinstance(seed, str):
+    #     seed = str_to_seed(seed)
+    #
+    # seed = seed % SEED_MAX
+    # seed = int(seed)
+    #
+    # global simplex
+    # global current_seed
+    #
+    # current_seed = seed
+    # if seed in cached_simplex:
+    #     simplex = cached_simplex[seed]
+    # else:
+    #     simplex = OpenSimplex(seed)
+    #     cached_simplex[seed] = simplex
+    #
+    # random.seed(seed)
+    # np.random.seed(seed)
+    #
+    # if with_torch:
+    #     torch.manual_seed(seed)
+    pass
 
 
 def str_to_seed(seed):
@@ -144,6 +155,25 @@ def val_or_range(v, max=None):
         return float(v)
     else:
         raise ValueError(f"maths.val_or_range: Bad argument={v}, type={type(v)}")
+
+
+def smooth_damp(current, target, current_velocity, smooth_time, max_speed, delta_time):
+    smooth_time = max(0.0001, smooth_time)
+    inverse_smooth_time = 2 / smooth_time
+    delta_time_scaled = inverse_smooth_time * delta_time
+    damping_coefficient = 1 / (1 + delta_time_scaled + 0.48 * delta_time_scaled * delta_time_scaled + 0.235 * delta_time_scaled * delta_time_scaled * delta_time_scaled)
+    delta_current_target = current - target
+    target_temp = target
+    max_speed_smooth_time = max_speed * smooth_time
+    delta_current_target = min(max(delta_current_target, -max_speed_smooth_time), max_speed_smooth_time)
+    target = current - delta_current_target
+    velocity_scaled_delta = (current_velocity + inverse_smooth_time * delta_current_target) * delta_time
+    current_velocity = (current_velocity - inverse_smooth_time * velocity_scaled_delta) * damping_coefficient
+    current_temp = target + (delta_current_target + velocity_scaled_delta) * damping_coefficient
+    if (target_temp - current > 0) == (current_temp > target_temp):
+        current_temp = target_temp
+        current_velocity = (current_temp - target_temp) / delta_time
+    return current_temp, current_velocity
 
 
 def lerp(a, b, t):
@@ -236,7 +266,7 @@ def rcurve(x, k=0.3, norm_window=None):
     return tsigmoid(clamp01(x), -k, norm_window)
 
 
-def perlin(t, freq=0.8):
+def perlin(t, freq=1.0):
     return simplex.noise2(t * freq, 0)
 
 
@@ -247,12 +277,12 @@ def npperlin(count, freq=1, off=0):
     return ret
 
 
-def clamp(v, min, max):
-    return np.clip(v, min, max)
+def clamp(v, lo, hi):
+    return min(max(v, lo), hi)
 
 
 def clamp01(v):
-    return np.clip(v, 0, 1)
+    return min(max(v, 0), 1)
 
 
 def euler_to_quat(pitch, yaw, roll):

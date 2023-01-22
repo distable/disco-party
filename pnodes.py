@@ -403,7 +403,7 @@ class PromptWords(PromptList):
         else:
             words = words.split(' ')
 
-        words = [f'1.0 {prefix}{word}{suffix}' for word in words]
+        words = [f'1.0 {prefix}{word.strip()}{suffix}' for word in words]
         s = '\n'.join(words)
 
         super(PromptWords, self).__init__(s, scale=scale, add=add)
@@ -418,7 +418,7 @@ class PromptWords(PromptList):
 class PromptPhrases(PromptList):
     def __init__(self, phrases, scale=1, add=0, prefix='', suffix=''):
         phrases = phrases.split('\n')
-        phrases = [f'1.0 {prefix}{phrase}{suffix}' for phrase in phrases]
+        phrases = [f'1.0 {prefix}{phrase.strip()}{suffix}' for phrase in phrases]
         s = '\n'.join(phrases)
         super(PromptPhrases, self).__init__(s, scale=scale, add=add)
 
