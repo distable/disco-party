@@ -636,8 +636,12 @@ def bake_prompt(prompt: str, confdefaults, lookup):
     import copy
     all = []
 
+    print("")
+    print(f"Baking prompt:\n{prompt.strip()}")
+
     prompt = prompt.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
     prompt = prompt.strip()
+
 
     # Match map \<\w+\>
     matches = [None]
@@ -676,6 +680,9 @@ def bake_prompt(prompt: str, confdefaults, lookup):
 
     root = PromptList(all)
     bake(root)
+    print(f"Baked {len(all_prompt_nodes)} nodes")
+    print("")
+
     return root
 
 

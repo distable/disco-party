@@ -1,10 +1,11 @@
 from pydub import AudioSegment
 import soundfile as sfile
-from maths import *
 import numpy as np
 from pathlib import Path
 import pandas as pd
-from globals import *
+
+from .maths import *
+from .globals import *
 
 # import librosa
 # import librosa.display

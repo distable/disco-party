@@ -278,11 +278,11 @@ def npperlin(count, freq=1, off=0):
 
 
 def clamp(v, lo, hi):
-    return min(max(v, lo), hi)
+    return np.clip(v, lo, hi)
 
 
 def clamp01(v):
-    return min(max(v, 0), 1)
+    return np.clip(v, 0, 1)
 
 
 def euler_to_quat(pitch, yaw, roll):

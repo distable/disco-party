@@ -1,15 +1,12 @@
 import json
 from typing import Union
-
-import numpy as np
-from bunch import Bunch
+import mido
 
 from collections.abc import Iterable
 
 # Assign these
-from maths import *
-from globals import *
-import mido
+from .maths import *
+from .globals import *
 
 
 def load_pose_frames(path, joint: Union[int, tuple], original_fps=29.89):
@@ -161,6 +158,7 @@ def load_midibucket_frames(path, as_numpy=False):
 
 
 def load_midi_frames(path):
+    print(path)
     mid = mido.MidiFile(path)
 
     # Gather information
