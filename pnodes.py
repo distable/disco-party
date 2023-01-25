@@ -1,8 +1,12 @@
+import re
 from operator import attrgetter, itemgetter
 
 from bunch import Bunch
 from typing import List
 from random import shuffle
+
+from typing_extensions import override
+
 from .maths import *
 from pathlib import Path
 
@@ -22,9 +26,8 @@ vis_display_min_significance = 0.115
 
 font = None
 
-# Baked Data ----------------------------------------
-bake_index = []
 
+# Baked Data ----------------------------------------
 
 class Keyframe:
     def __init__(self):
@@ -33,20 +36,19 @@ class Keyframe:
 
 
 class PromptNode:
-    def __init__(self, text=None, wt=1, mask=None):
+    def __init__(self, content=None, wt=1.0, mask=None,  scale: float = 1.0, add: float = 0.0, prefix: str = '', suffix: str = ''):
         self.parent = None
         self.children = []
-        self.text = text
         self.weight = wt
         self.stop = None
         self.mask = mask
+        self.text = content if isinstance(content, str) else None
 
         # Modifiers
         self.add = 0
         self.scale = 1
 
         # Baking
-        self.index = None
         self.w = 1
         self.timeline = None
         self.min = 0
@@ -56,6 +58,12 @@ class PromptNode:
 
         # The actual 'neural prompt' (PyTTI's Prompt class)
         self.nprompt = None
+
+        self.scale = scale
+        self.add = 0
+        self.children = []
+        if content is not None:
+            self.add_children(content)
 
     def __str__(self):
         return f"{type(self).__name__}({self.text})"
@@ -67,12 +75,18 @@ class PromptNode:
         self.w = 0
         self.a = 0
         self.b = 0
-        self.index = 0
 
         self.timeline = []
 
     def eval_text(self, t):
-        if isinstance(self.text, str):
+        if len(self.children) == 0:
+            return self.text
+        elif len(self.children) >= 1:
+            ret = ""
+            for n in self.children:
+                ret += n.eval_text(t)
+            return ret
+        elif isinstance(self.text, str):
             return self.text
         elif isinstance(self.text, list):
             ret = ""
@@ -82,8 +96,8 @@ class PromptNode:
                 elif isinstance(token, PromptNode):
                     ret += token.eval_text(t)
             return ret
-
         raise RuntimeError(f"Invalid PromptNode text: {self.text}")
+
 
     def get_lossy_scale(self):
         scale = self.scale
@@ -119,9 +133,6 @@ class PromptNode:
 
         return lerp(last, next, interframe)
 
-    def bake(self):
-        pass
-
     def get_debug_string(self,
                          t_length=10,
                          t_timestep=0.5):
@@ -134,7 +145,12 @@ class PromptNode:
             str_timeline = [f"{v:.1f}" for v in t_values]
             return f"{self.text}: {', '.join(str_timeline)}"
         else:
-            return f"{self.weight} NOBAKE"
+            return f"{self.weight} {self.text}"
+
+    # def get_debug_string(self,
+    #                      t_length=10,
+    #                      t_timestep=0.5):
+    #     return f"PromptNode({len(self.children)} children)"
 
     def print(self,
               t_length=10,
@@ -149,37 +165,15 @@ class PromptNode:
         for n in self.children:
             n.print(t_length, t_timestep, depth + 1)
 
-
-class PromptList(PromptNode):
-    def __init__(self, children: object = None, scale: float = 1, add: float = 0, prefix: str = '', suffix: str = ''):
-        super(PromptList, self).__init__()
-        self.scale = scale
-        self.add = 0
-        self.children = []
-        if children is not None:
-            self.add_children(children)
-
-    def get_debug_string(self,
-                         t_length=10,
-                         t_timestep=0.5):
-        return f"PromptList({len(self.children)} children)"
-
-    def eval_text(self, t):
-        children_by_w = sorted(self.children, key=lambda n: n.get_weight_at(t), reverse=True)
-        top = children_by_w[0]
-        # print(f"PromptList.eval_text: top={top.eval_text(t)}", [n.get_weight_at(t) for n in children_by_w])
-        return top.eval_text(t)
-
-
     def evaluate(self, t):
-        raise RuntimeError(f"Cannot evaluate a PromptList ({self.eval_text(t)})")
+        raise RuntimeError(f"Cannot evaluate a PromptNode ({self.eval_text(t)})")
 
     def add_child(self, node):
         self.children.append(node)
         node.parent = self
 
     def add_children(self, add):
-        if isinstance(add, str):
+        if isinstance(add, str) and '\n' in add:
             # if len(prefix) > 0: prefix = prefix + ' '
             # if len(suffix) > 0: suffix = ' ' + suffix
 
@@ -190,11 +184,14 @@ class PromptList(PromptNode):
                 self.add_child(p)
         elif isinstance(add, PromptNode):
             self.add_child(add)
-        elif isinstance(add, PromptList):
-            for n in add.children:
-                self.add_child(n)
         else:
-            raise RuntimeError(f"PromptList.add_children: Invalid input children nodes type {type(add)}")
+            # raise RuntimeError(f"PromptNode.add_children: Invalid input children nodes type {type(add)}")
+            pass
+
+    def swap(self, a, b):
+        idx = self.children.index(a)
+        self.children.remove(a)
+        self.children.insert(idx, b)
 
     def bake(self):
         for n in self.children:
@@ -221,16 +218,49 @@ class PromptList(PromptNode):
     def __next__(self): return self.children.__next__()
 
 
-class GlobalSet(PromptList):
+
+class JoinList(PromptNode):
+    def __init__(self, children, join_char: str = '', join_num: int = 1, **kwargs):
+        super(JoinList, self).__init__(children, **kwargs)
+        self.join_char = join_char
+        self.join_num = join_num
+
+        self.join_num = 1
+
+    @override
+    def eval_text(self, t):
+        if len(self.children) == 0:
+            return self.text
+
+        children_by_w = sorted(self.children, key=lambda n: n.get_weight_at(t), reverse=True)
+        top = children_by_w[0]
+
+        if self.join_num > 1:
+            s = ''
+            c = self.join_char
+            if c == ',': c = ', '
+
+            for i in range(self.join_num):
+                s += children_by_w[i].eval_text(t)
+                s += c
+
+            s = s[:-len(c)]
+            return s
+
+        # print(f"PromptNode.eval_text: top={top.eval_text(t)}", [n.get_weight_at(t) for n in children_by_w])
+        return top.eval_text(t)
+
+
+class GlobalSet(PromptNode):
     def __init__(self, scale: float = 1, add: float = 0, prefix: str = "", suffix: str = "", **kwargs: object):
-        super(GlobalSet, self).__init__(children=[x for x in kwargs.values()], add=add, scale=scale, prefix=prefix, suffix=suffix)
+        super(GlobalSet, self).__init__([x for x in kwargs.values()], add=add, scale=scale, prefix=prefix, suffix=suffix)
 
         for k, v in kwargs.items():
             globals()[k] = v
         pass
 
 
-class ProportionSet(PromptList):
+class ProportionSet(JoinList):
     def __init__(self,
                  children,
                  width: float | tuple[float, float] = None,
@@ -259,7 +289,9 @@ class ProportionSet(PromptList):
                          t_timestep=0.5):
         return f"ProportionSet({len(self.children)} children)"
 
+    @override
     def bake(self):
+        super().bake()
         totalSteps = max_duration * resolution
 
         for child in self.children:
@@ -328,7 +360,7 @@ class ProportionSet(PromptList):
                     timeline.append(w)
 
 
-class SequenceSet(PromptList):
+class SequenceSet(JoinList):
     def __init__(self, children, width=10, lerp=0.25, scale=1, add=0, prefix='', suffix=''):
         super(SequenceSet, self).__init__(children, scale=scale, add=add, prefix=prefix, suffix=suffix)
         self.children = children
@@ -344,7 +376,10 @@ class SequenceSet(PromptList):
                          t_timestep=0.5):
         return f"SequenceSet({len(self.children)} children)"
 
+    @override
     def bake(self):
+        super().bake()
+
         # bake the timelines
         totalSteps = max_duration * resolution
 
@@ -392,11 +427,11 @@ class SequenceSet(PromptList):
                 node.k = rng(0.4, 0.6)
 
 
-class CurveSet(PromptList):
+class CurveSet(PromptNode):
     pass
 
 
-class PromptWords(PromptList):
+class PromptWords(PromptNode):
     def __init__(self, words, scale=1, add=0, prefix='', suffix=''):
         if ',' in words:
             words = words.split(',')
@@ -415,9 +450,9 @@ class PromptWords(PromptList):
         return f"PromptWords({len(self.children)} children)"
 
 
-class PromptPhrases(PromptList):
+class PromptPhrases(PromptNode):
     def __init__(self, phrases, scale=1, add=0, prefix='', suffix=''):
-        phrases = phrases.split('\n')
+        phrases = phrases.strip().split('\n')
         phrases = [f'1.0 {prefix}{phrase.strip()}{suffix}' for phrase in phrases]
         s = '\n'.join(phrases)
         super(PromptPhrases, self).__init__(s, scale=scale, add=add)
@@ -429,13 +464,13 @@ class PromptPhrases(PromptList):
 
 
 # region Visualization
-# scenes = PromptList("""
+# scenes = PromptNode("""
 # 1 A lamborghini on the road leaving a trail of psychedelic fumes and smoke
 # 1 Huge megalithic rocks in the shape of human nose and ears
 # 1 A large tree next to a megalithic rock
 # """)
 #
-# backdrops = PromptList("""
+# backdrops = PromptNode("""
 # 1 A beautiful psychelic mural in the style of Van Gogh
 # 1 Beautiful snake textures 4k tiling texture
 # 1 Intricate bark texture from a tree in nature
@@ -563,27 +598,14 @@ class PromptPhrases(PromptList):
 # endregion
 
 def bake(root):
-    global bake_index
-    bake_index = []
     ret = []
 
+    # root.bake()
     for v in dfs(root):
         v.bake()
-        v.index = len(bake_index)
-        bake_index.append(v)
-
-        # v.print()
-
         ret.append(v)
 
     return ret
-
-
-# The function to be used by the baked prompts for their weight
-# Will query the bake_index and evaluate the relevant promptnode
-def evaluate_node(index, t):
-    global bake_index
-    return bake_index[index].get_weight_at(t)
 
 
 def dfs(node):
@@ -628,85 +650,113 @@ def parse_promptlines(promptstr, prefix='', suffix=''):
 
 
 # bake_prompt(f"{scene} with black <a_penumbra> distance fog. Everything is ultra detailed, has 3D overlapping depth effect, into the center, painted with neon reflective/metallic/glowing ink, covered in <a_gem> <a_gem2> gemstone / <n_gem> ornaments, <a_light> light diffraction, (vibrant and colorful colors), {style}, painted with (acrylic)", settypes, setmap, locals())
-all_prompt_nodes = []
+
+wc_regex = r'(\<(\w+)(:([\w|\d\/,]*))?(:([\w|\d\/,]+))?\>)'
 
 
-def bake_prompt(prompt: str, confdefaults, lookup):
-    import re
-    import copy
-    all = []
+class WildcardNode(PromptNode):
+    def __init__(self, text, wcconfs, globals):
+        super().__init__()
 
-    print("")
-    print(f"Baking prompt:\n{prompt.strip()}")
+        import re
+        import copy
 
-    prompt = prompt.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
-    prompt = prompt.strip()
+        self.text = text
+        text = text.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+        text = text.strip()
 
+        def parse_wc(wctext):
+            parts = re.findall(wc_regex, wctext)[0]
+            wcname = parts[1]
+            wcconf = parts[3]
+            tiling = parts[5]
+            wc = globals.get(wcname)
+            conf = globals.get(wcconf) or wcconfs.get(wcname) or wcconfs.get('*')
 
-    # Match map \<\w+\>
-    matches = [None]
-    while len(matches) > 0:
-        matches = re.findall(r'(\<(\w+)(:(\w+))?\>)', prompt)
-        # print("MATCHES", matches)
-        for match in matches:
-            full = match[0]
-            setname = match[1]
-            confname = None
-
-            set = lookup.get(setname)
-            conf = None
-
-            if len(match) >= 2:
-                colon = match[2]
-                confname = match[3]
-                conf = lookup.get(confname)
-
-            conf = confdefaults.get(setname) or confdefaults.get('*')
             if isinstance(conf, list):
                 conf = choose(conf)
 
-            if conf is None: raise Exception(f"Couldn't get conf: {confname}")
-            if set is None: raise Exception(f"Couldn't get set: {setname}")
+            if wc is None: raise Exception(f"Couldn't get set: {wcname}")
+            if conf is None: raise Exception(f"Couldn't get conf: {wcname}, {wcconf}")
 
-            # print('append', set, conf, setname, confname)
             v = copy.copy(conf)
-            v.children = copy.deepcopy(set)
+            v.children = copy.deepcopy(wc)
+            if tiling:
+                tile_num = tiling[0]
+                tile_char = tiling[1]
+                v.join_char = tile_char
+                v.join_num = int(tile_num)
 
-            all.append(v)
-            prompt = prompt.replace(full, "STUB", 1)
+            return v
 
-    global all_prompt_nodes
-    all_prompt_nodes = all
+        # Match map \<\w+\>
+        children = []
+        i = 0
+        last_i = -1
 
-    root = PromptList(all)
+        def append_wc():
+            nonlocal last_i
+            s = text[last_i:i + 1]
+            if not s: return
+            node = parse_wc(s)
+            children.append(node)
+            last_i = i + 1
+
+        def append_text():
+            nonlocal last_i
+            s = text[last_i:i]
+            if not s: return
+            node = WildcardNode(s, wcconfs, globals)
+            children.append(node)
+            last_i = i + 1
+
+        while i < len(text):
+            c = text[i]
+            if c == '<':
+                append_text()
+                last_i = i
+                i = text.find('>', i)
+                append_wc()
+
+            i += 1
+
+        if children:
+            append_text()
+            self.children = children
+
+            for child in dfs(self):
+                if child.text and '<' in child.text and '>' in child.text:
+                    wn = WildcardNode(child.text, wcconfs, globals)
+                    child.parent.swap(child, wn)
+
+
+    def bake(self):
+        self.index = -1
+
+    def get_weight_at(self, t):
+        return 0
+
+    def __str__(self):
+        return self.text
+
+
+def bake_prompt(prompt: str, wcconfs, globals):
+    print("")
+    print(f"Baking prompt:\n{prompt.strip()}")
+
+    root = WildcardNode(prompt, wcconfs, globals)
+
     bake(root)
-    print(f"Baked {len(all_prompt_nodes)} nodes")
+    root.print()
     print("")
 
     return root
 
 
-def eval_prompt(prompt: str, t):
-    import re
-    import copy
+def eval_prompt(root, t):
+    if
 
-    prompt = prompt.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
-    prompt = prompt.strip()
-
-    # Match all \<\w+\>
-    i = 0
-    matches = [None]
-    while len(matches) > 0:
-        matches = re.findall(r'(\<(\w+)(:(\w+))?\>)', prompt)
-        for match in matches:
-            if len(all_prompt_nodes) <= i:
-                raise Exception(f"Couldn't find prompt node at {i} (all={all_prompt_nodes})")
-
-            node = all_prompt_nodes[i]
-            prompt = prompt.replace(match[0], node.eval_text(t), 1)
-            i += 1
-
-    return prompt
+    return root.eval_text(t)
 
 
 # region Disco

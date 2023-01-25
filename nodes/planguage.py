@@ -239,7 +239,7 @@ class WordNode(PromptNode):
     pass
 
 
-class AdjectiveNode(PromptList):
+class AdjectiveNode(PromptNode):
     def __init__(self, text):
         super(AdjectiveNode, self).__init__()
         pass

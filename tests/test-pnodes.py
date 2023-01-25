@@ -1,6 +1,6 @@
 from pnodes import *
 
-backdrops = PromptList('''
+backdrops = PromptNode('''
 1.5 Some kind of gas cloud with a red lightning strike going through it, in the middle of outer space.
 1.5 Beautiful rolling clouds in the sunset/dusk
 1.5 Black thunderstorm clouds in the shape of a fractal, with thunderbolts
@@ -50,7 +50,7 @@ backdrops = PromptList('''
 1 The landscape is slightly inebriated with unoccured horrors, and is not feeling so great. A psychedelic nightmare of words of ideas, the infernal carousel
 ''')
 
-objects = PromptList('''
+objects = PromptNode('''
 1 A massive psychedelic dragon made out of magical brain coral
 1 An enormous hypercube structure through which all light comes from
 1 A megastructure made out of ruby is exploding spectacularly in outer space, sending reflective shards everywhere
@@ -77,7 +77,7 @@ objects = PromptList('''
 1 The solar eclipse in space is looking happy! #artistic #feelings
 ''')
 
-scenes = PromptList('''
+scenes = PromptNode('''
 1 Four Dimensional Time Rift with auroras coming out of the portal, like a tear in the space-time continuum
 1 a landscape with atmospheric fog going into the distance, behind foliage and trees in the foreground.
 1 A beautiful world made of carpet and patchwork landscape, with a nice grey sky.
@@ -136,7 +136,7 @@ scenes = PromptList('''
 1 Small rock islets floating in suspension in the middle of nothing, rotating in orbit around a huge glowy black. A blood moon is illuminating the scene, making everything reddish.
 ''')
 
-shapes = PromptList('''
+shapes = PromptNode('''
 1 Spirals
 1 Diagonals
 1 Crosshatching Pattern
@@ -171,7 +171,7 @@ shapes = PromptList('''
 1 an helix
 ''')  # In the shape of, shaped like, shape of, there's
 
-textures = PromptList('''
+textures = PromptNode('''
 1.4 Fractal fern leaves pattern
 1.4 Bump Map Texture
 1.4 Tessellated skin from a black snake texture
@@ -204,7 +204,7 @@ textures = PromptList('''
 2.0 Dither pattern #pixelart 
 ''')
 
-artists = PromptList('''
+artists = PromptNode('''
 1.25 #pixelart with bayer dither
 1.25 In the style of a Vincent Van Gogh
 1.45 By Marsden Hartley
@@ -222,7 +222,7 @@ artists = PromptList('''
 1 Simple shapes with large brushstrokes
 ''')
 
-everything = PromptList('''
+everything = PromptNode('''
 1 flowing into motion
 1 sliding down a slope with motion and energy
 1 in motion
@@ -237,11 +237,11 @@ everything = PromptList('''
 1 condensing into dmt entities
 ''', prefix="Everything is")
 
-materials = PromptList('''
+materials = PromptNode('''
 1 Soft iridescent plasticine and clay
 ''', prefix='Made out of')
 
-colors1 = PromptList('''
+colors1 = PromptNode('''
 1 There is an blue sheen on everything...
 1 The purple colors are being refracted everywhere from the edges!
 1 Cyan and green colors are everywhere like fireflies!
@@ -255,7 +255,7 @@ colors1 = PromptList('''
 1 The colors of this image are in the style of technicolor purple, cyan, green, and black
 ''')
 
-colors2 = PromptList('''
+colors2 = PromptNode('''
 1 There is an blue sheen on everything...
 1 The purple colors are being refracted everywhere from the edges!
 1 Cyan and green colors are everywhere like fireflies!
@@ -269,7 +269,7 @@ colors2 = PromptList('''
 1 The colors of this image are in the style of technicolor purple, cyan, green, and black
 ''')
 
-chromatic = PromptList('''
+chromatic = PromptNode('''
 1 basil
 1 green
 1 clover
@@ -295,13 +295,13 @@ chromatic = PromptList('''
 1 celery
 ''', prefix='[', suffix=' palette]')
 
-bloom = PromptList("""
+bloom = PromptNode("""
 1 Two beautiful intricately detailed flowers twisting into an helix to create a single psychedelic blooming sensation
 1 Two trees growing side by side in a large calm psychedelic meadow river, leaning towards one another
 1 The moon and the sun shine back at each other in a vast empty space of subtle hyperdetails black and white details
 """)
 
-ryunuck = PromptList("""
+ryunuck = PromptNode("""
   3.2 Details and texture into the horizon. The background is full of subtle details!
   1.6 Drawn on black paper and textured finely ground tiny colorful iridescent gemstone shards and colored crayontexture for shading.
   2.1 The beautiful scenic meadow and chinese valleys, everything is in motion and the far deep horizon, beautiful scenic landscape
