@@ -2,7 +2,7 @@ import re
 import time
 from colorsys import *
 
-from globals import *
+from constants import *
 
 
 class Timer:

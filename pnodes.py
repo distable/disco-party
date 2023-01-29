@@ -1,14 +1,10 @@
-import re
-from operator import attrgetter, itemgetter
-
-from bunch import Bunch
-from typing import List
 from random import shuffle
+from typing import List
 
 from typing_extensions import override
 
+from . import constants
 from .maths import *
-from pathlib import Path
 
 if not 'google.colab' in sys.modules:
     pass
@@ -36,7 +32,7 @@ class Keyframe:
 
 
 class PromptNode:
-    def __init__(self, content=None, wt=1.0, mask=None,  scale: float = 1.0, add: float = 0.0, prefix: str = '', suffix: str = ''):
+    def __init__(self, content=None, wt=1.0, mask=None, scale: float = 1.0, add: float = 0.0, prefix: str = '', suffix: str = ''):
         self.parent = None
         self.children = []
         self.weight = wt
@@ -121,15 +117,19 @@ class PromptNode:
         if self.timeline is None:
             raise RuntimeError(f"Cannot evaluate a PromptNode without timeline ({self.eval_text(t)})")
 
+        res = constants.resolution
+        seconds = constants.max_duration
+
         # Interpolate smoothly between keyframes
-        idx = int(t * resolution)
-        idx = clamp(idx, 0, max_duration * resolution)
+        idx = int(t * res)
+        idx = clamp(idx, 0, seconds * res)
+        idx = int(idx)
 
         last = self.timeline[idx]
-        next = self.timeline[idx + 1]  #
+        next = self.timeline[idx + 1]
 
-        frameStart = idx / resolution
-        interframe = (t - frameStart) / (1 / resolution)
+        frameStart = idx / res
+        interframe = (t - frameStart) / (1 / res)
 
         return lerp(last, next, interframe)
 
@@ -218,7 +218,6 @@ class PromptNode:
     def __next__(self): return self.children.__next__()
 
 
-
 class JoinList(PromptNode):
     def __init__(self, children, join_char: str = '', join_num: int = 1, **kwargs):
         super(JoinList, self).__init__(children, **kwargs)
@@ -227,7 +226,6 @@ class JoinList(PromptNode):
 
         self.join_num = 1
 
-    @override
     def eval_text(self, t):
         if len(self.children) == 0:
             return self.text
@@ -292,7 +290,7 @@ class ProportionSet(JoinList):
     @override
     def bake(self):
         super().bake()
-        totalSteps = max_duration * resolution
+        totalSteps = constants.max_duration * constants.resolution
 
         for child in self.children:
             child.reset_bake()
@@ -303,12 +301,12 @@ class ProportionSet(JoinList):
         # Prepare shuffled order
         shuffled_children = list()
         for i, node in enumerate(self.children):
-            node.index = i
+            node.iwav = i
             shuffled_children.append(node)
 
         time = 0
         while time < totalSteps:
-            period = int(val_or_range(self.period) * resolution)
+            period = int(val_or_range(self.period) * constants.resolution)
             time += period
 
             shuffle(shuffled_children)
@@ -326,7 +324,7 @@ class ProportionSet(JoinList):
                 keyframe.time = time + int(val_or_range(self.drift) * period)
 
                 w *= p
-                keyframes[node.index] = keyframe
+                keyframes[node.iwav] = keyframe
 
             states.append(keyframes)
 
@@ -381,7 +379,7 @@ class SequenceSet(JoinList):
         super().bake()
 
         # bake the timelines
-        totalSteps = max_duration * resolution
+        totalSteps = constants.max_duration * constants.resolution
 
         for child in self.children:
             child.reset_bake()
@@ -414,6 +412,7 @@ class SequenceSet(JoinList):
 
             # Advance the scene, tween in
             if i == end:
+                from src_plugins.disco_party.constants import resolution
                 period = int(val_or_range(self.width) * resolution)
 
                 index = (index + 1) % len(self.children)
@@ -663,6 +662,7 @@ class WildcardNode(PromptNode):
 
         self.text = text
         text = text.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+        text = re.sub(r'\s+', ' ', text) # Collapse multiple spaces to 1, caused by multiline strings
         text = text.strip()
 
         def parse_wc(wctext):
@@ -754,7 +754,25 @@ def bake_prompt(prompt: str, wcconfs, globals):
 
 
 def eval_prompt(root, t):
-    if
+    has_fd = True
+    for node in dfs(root):
+        if node.timeline:
+            try:
+                node.get_bake_at(t)
+            except:
+                has_fd = False
+                break
+
+    if not has_fd:
+        # Extend the duration and rebake
+        from src_plugins.disco_party import globals
+        constants.max_duration = t + 60
+        print(f"pnodes: extending max duration to {constants.max_duration:.02}s and rebaking")
+
+        bake(root)
+
+        # Try again
+        return eval_prompt(root, t)
 
     return root.eval_text(t)
 
@@ -767,7 +785,7 @@ def eval_prompt(root, t):
 def bake_disco(root: PromptNode):
     dd_prompts = []
     for v in bake(root):
-        dd_prompts.append(f'{v.eval_text()}:evaluate_node:{v.index}')
+        dd_prompts.append(f'{v.eval_text()}:evaluate_node:{v.iwav}')
 
     return {0: dd_prompts}
 

@@ -1,5 +1,7 @@
 from pnodes import *
 
+from src_plugins.disco_party.pnodes import PromptNode, ProportionSet
+
 backdrops = PromptNode('''
 1.5 Some kind of gas cloud with a red lightning strike going through it, in the middle of outer space.
 1.5 Beautiful rolling clouds in the sunset/dusk
@@ -338,10 +340,11 @@ def bake_stable(frame=0):
     nodes = sorted(nodes, key=itemgetter(1), reverse=True)[:10]
 
     return ' '.join([f'{x[0].text}:{x[1]:.2f}' for x in nodes])
+
+
 # [print(f'{x[0].text}:{x[1]:.2f}') for x in nodes]
 
 for _ in bake(root): pass
-
 
 print(bake_stable(2.15))
 print(bake_stable(2.35))

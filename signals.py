@@ -6,7 +6,7 @@ from collections.abc import Iterable
 
 # Assign these
 from .maths import *
-from .globals import *
+from .constants import *
 
 
 def load_pose_frames(path, joint: Union[int, tuple], original_fps=29.89):

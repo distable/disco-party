@@ -1,2 +1,3 @@
 mido
+simpleaudio
 git+https://github.com/pvigier/perlin-numpy

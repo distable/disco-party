@@ -1,14 +1,10 @@
 from pydub import AudioSegment
 import soundfile as sfile
-import numpy as np
 from pathlib import Path
 import pandas as pd
 
+from . import constants
 from .maths import *
-from .globals import *
-
-# import librosa
-# import librosa.display
 
 
 def load_crepe_keyframes(filename):
@@ -19,7 +15,7 @@ def load_crepe_keyframes(filename):
 
 
 def load_dbnorm_keyframes(filename, window=None, caching=True):
-    window = window if window is None else window * fps
+    window = window if window is None else window * constants.fps
     return norm(load_db_keyframes(filename, caching), window=window)
 
 
@@ -62,13 +58,13 @@ def to_keyframes(dbs, original_sps):
     # start=0
     # total_seconds=5
 
-    frames = int(fps * total_seconds)
+    frames = int(constants.fps * total_seconds)
 
     dt = np.zeros(frames)
     for i in range(frames):
         # frame --> seconds
-        t = (i) / fps + start
-        t1 = (i + 1) / fps + start
+        t = (i) / constants.fps + start
+        t1 = (i + 1) / constants.fps + start
         # print(t, t1)
 
         d = dbs[int(t * original_sps):int((t1) * original_sps)]
@@ -86,11 +82,14 @@ def convert_to_decibel(arr):
         return -60
 
 
-def play_wav(seg):
+def play_wav(audioseg, t):
     import simpleaudio
+    if t is not None:
+        audioseg = audioseg.get_sample_slice(int(t * audioseg.frame_rate))
+
     return simpleaudio.play_buffer(
-            seg.raw_data,
-            num_channels=seg.channels,
-            bytes_per_sample=seg.sample_width,
-            sample_rate=seg.frame_rate
+            audioseg.raw_data,
+            num_channels=audioseg.channels,
+            bytes_per_sample=audioseg.sample_width,
+            sample_rate=audioseg.frame_rate
     )

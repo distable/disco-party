@@ -2,17 +2,14 @@
 # along with a parametric eval and global math env to use for evaluation
 
 import random
-import time
-
-import torch
-from math import *
-from opensimplex import OpenSimplex
 import sys
+from math import *
+
 import numpy as np
-from numpy.lib.stride_tricks import sliding_window_view
-from scipy.ndimage import uniform_filter1d
 from numpy import ndarray
-from .globals import *
+from numpy.lib.stride_tricks import sliding_window_view
+from opensimplex import OpenSimplex
+from scipy.ndimage import uniform_filter1d
 
 # import pytti
 simplex = OpenSimplex(random.randint(-999999, 9999999))
