@@ -765,7 +765,6 @@ def eval_prompt(root, t):
 
     if not has_fd:
         # Extend the duration and rebake
-        from src_plugins.disco_party import globals
         constants.max_duration = t + 60
         print(f"pnodes: extending max duration to {constants.max_duration:.02}s and rebaking")
 

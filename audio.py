@@ -6,12 +6,35 @@ import pandas as pd
 from . import constants
 from .maths import *
 
+# TODO melodic speed
+# TODO harmonic chg speed
+
 
 def load_crepe_keyframes(filename):
     df = pd.read_csv(filename)
     freq = to_keyframes(df['frequency'], len(df['frequency']) / df['time'].values[-1])
     confidence = to_keyframes(df['confidence'], len(df['frequency']) / df['time'].values[-1])
     return freq, confidence
+
+def load_harmonics(filename):
+    import librosa
+    from src_plugins.disco_party.keyfinder import Tonal_Fragment
+
+    # This audio takes a long time to load because it has a very high sampling rate; be patient.
+    # the load function generates a tuple consisting of an audio object y and its sampling rate sr
+    y, sr = librosa.load(filename)
+
+    # This function filters out the harmonic part of the sound file from the percussive part, allowing for
+    # more accurate harmonic analysis
+    y_harmonic, y_percussive = librosa.effects.hpss(y)
+
+    unebarque_fsharp_min = Tonal_Fragment(y_harmonic, sr, tend=22)
+    unebarque_fsharp_min.print_chroma()
+    # ipd.Audio(filename)
+
+    unebarque_fsharp_min.print_key()
+    unebarque_fsharp_min.corr_table()
+    unebarque_fsharp_min.chromagram("Une Barque sur l\'Ocean")
 
 
 def load_dbnorm_keyframes(filename, window=None, caching=True):
