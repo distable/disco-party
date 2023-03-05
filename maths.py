@@ -39,6 +39,7 @@ SEED_MAX = 2 ** 32 - 1
 
 cached_simplex = {}
 
+
 def set_seed(seed=None, with_torch=True):
     # if seed is None:
     #     seed = int(time.time())
@@ -263,15 +264,30 @@ def rcurve(x, k=0.3, norm_window=None):
     return tsigmoid(clamp01(x), -k, norm_window)
 
 
+def srcurve(v, a=0.3, b=0.3, norm=None):
+    return scurve(rcurve(v, a, norm), b)
+
+
+def jrcurve(v, a=0.3, b=0.3, norm=None):
+    return rcurve(rcurve(v, a, norm), b)
+
+
 def perlin(t, freq=1.0):
     return simplex.noise2(t * freq, 0)
 
 
 def npperlin(count, freq=1, off=0):
+    if isinstance(count, ndarray):
+        count = count.shape[0]
+
     ret = np.zeros(count)
     for i in range(count):
         ret[i] = perlin(i + off, freq)
     return ret
+
+
+def npperlin_like(ar, freq=1, off=0):
+    return npperlin(ar.shape[0], freq, off)
 
 
 def clamp(v, lo, hi):
@@ -365,8 +381,10 @@ def schedule(*args):
 def pdiff(x):
     v = np.diff(x)
     v = np.append(v, v[-1])
-
     return v
+
+def absdiff(x):
+    return abs(pdiff(x))
 
 
 def pconvolve(x, kernel):

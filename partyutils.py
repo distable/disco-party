@@ -31,7 +31,7 @@ def kprint(*kargs):
     print(s)
 
 
-def kwprint(**kwargs):
+def printkw(**kwargs):
     s = ""
     for k, v in kwargs.items():
         # idk why we have to check for bools or if its even required, not gonna question it I have better things to do like actually getting stuff done

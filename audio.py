@@ -48,7 +48,7 @@ def load_db_keyframes(filename, caching=True):
 
 
 def load_db(filename, caching=True):
-    audio = AudioSegment.from_mp3(filename)
+    audio = AudioSegment.from_file(filename)
 
     # Load the cache if enabled
     cachepath = Path(filename).with_suffix(".npy")

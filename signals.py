@@ -1,12 +1,17 @@
 import json
+import os
 from typing import Union
 import mido
 
 from collections.abc import Iterable
 
+import resampy
+from scipy.signal import decimate
+
+from . import constants
 # Assign these
 from .maths import *
-from .constants import *
+# from .constants import *
 
 
 def load_pose_frames(path, joint: Union[int, tuple], original_fps=29.89):
@@ -30,7 +35,7 @@ def load_pose_frames(path, joint: Union[int, tuple], original_fps=29.89):
         o = json.load(file)
 
     framecount = len(o)
-    stretchcount = int(framecount / original_fps * fps)
+    stretchcount = int(framecount / original_fps * constants.fps)
 
     x = np.zeros(framecount)
     y = np.zeros(framecount)
@@ -61,7 +66,7 @@ def load_headrot_frames(path, original_fps=29.89):
         o = json.load(file)
 
     framecount = len(o)
-    stretchcount = int(framecount / original_fps * fps)
+    stretchcount = int(framecount / original_fps * constants.fps)
 
     rx = np.zeros(framecount)
     ry = np.zeros(framecount)
@@ -86,6 +91,89 @@ def load_headrot_frames(path, original_fps=29.89):
     rz = stretch(rz, stretchcount)
 
     return rx, ry, rz
+
+
+class VRRecording:
+    def __init__(self, samples_per_second):
+        self.samples_per_second = samples_per_second
+        self.inputs = []
+        self.nodes = {}
+
+    def __getattr__(self, name):
+        if name in self.nodes:
+            return self.nodes[name]
+        else:
+            return getattr(self, name)
+
+
+class VRInput:
+    def __init__(self, input, modality, d1, d2, d3):
+        self.input = input
+        self.modality = modality
+        self.d1 = d1
+        self.d2 = d2
+        self.d3 = d3
+        self.dd1 = pdiff(d1)
+        self.dd2 = pdiff(d2)
+        self.dd3 = pdiff(d3)
+
+
+VRNodes = {
+    'None'   : 0,
+    'A'      : 1,
+    'B'      : 2,
+    'X'      : 3,
+    'Y'      : 4,
+    'LMenu'  : 5,
+    'RMenu'  : 6,
+    'LStick' : 7,
+    'RStick' : 8,
+    'LGrip'  : 9,
+    'RGrip'  : 10,
+    'LTrig'  : 11,
+    'RTrig'  : 12,
+    'LPos'   : 13,
+    'RPos'   : 14,
+    'LRot'   : 15,
+    'RRot'   : 16,
+    'HeadPos': 17,
+    'HeadRot': 18
+}
+
+VRNodes_ID = dict(reversed(it) for it in VRNodes.items())
+
+def load_vr(path):
+    if not os.path.exists(path):
+        raise Exception(f"VR recording does not exist at {path}")
+
+    with open(path, 'r') as file:
+        o = json.load(file)
+        rec = VRRecording(o['SamplesPerSecond'])
+
+        inputs = o['Inputs']
+        for i in range(len(inputs)):
+            rec_input = inputs[i]
+
+            itype = int(rec_input['Type'])
+            modality = int(rec_input['Modality'])
+            d1 = np.array(rec_input['D1'])
+            d2 = np.array(rec_input['D2'])
+            d3 = np.array(rec_input['D3'])
+
+            if d2.shape[0] == 0: d2 = np.zeros(d1.shape[0])
+            if d3.shape[0] == 0: d3 = np.zeros(d1.shape[0])
+
+            # Stretch d2 and d3 to match d1 in case they're different lengths
+            d1 = resampy.resample(d1, rec.samples_per_second, constants.fps)
+            d2 = resampy.resample(d2, rec.samples_per_second, constants.fps)
+            d3 = resampy.resample(d3, rec.samples_per_second, constants.fps)
+
+            vrinput = VRInput(VRNodes_ID[itype], modality, d1, d2, d3)
+
+            rec.inputs.append(vrinput)
+            rec.nodes[VRNodes_ID[itype]] = vrinput
+
+        return rec
 
 
 # think I'm gonna use head pose estimation instead... it falls apart past 45deg but at least it's darn accurate under that
@@ -122,7 +210,7 @@ def load_midibucket_frames(path, as_numpy=False):
             notes.add(msg.note)
 
     # Build the frame data
-    framecount = int(duration * fps)
+    framecount = int(duration * constants.fps)
     frames = dict()
     lasttimes = dict()
     for n in notes:
@@ -141,7 +229,7 @@ def load_midibucket_frames(path, as_numpy=False):
 
     for msg in mid:
         time += msg.time
-        timef = int(time * fps)
+        timef = int(time * constants.fps)
 
         if msg.type == 'note_on':
             notes.add(msg.note)
@@ -167,13 +255,13 @@ def load_midi_frames(path):
         duration += msg.time
 
     # Build the frame data
-    frames = np.zeros(int(duration * fps))
+    frames = np.zeros(int(duration * constants.fps))
     time = 0
     lastf = 0
     lastn = 0
     for msg in mid:
         time += msg.time
-        timef = int(time * fps)
+        timef = int(time * constants.fps)
 
         if msg.type == 'note_on':
             for i in range(lastf, timef):
@@ -187,7 +275,7 @@ def load_midi_frames(path):
 
 def make_temporal_markers(like, measure_duration, start=0.0, end=np.inf):
     s = np.zeros_like(like)
-    for ts in np.arange(start * fps, np.min((end, s.shape[0])), measure_duration * fps):
+    for ts in np.arange(start * constants.fps, np.min((end, s.shape[0])), measure_duration * constants.fps):
         s[int(ts)] = 1
     return s
 
@@ -209,14 +297,14 @@ def make_msec(like, sections, filter=None, step=None, coded=True, sustain=False)
 
             if step is None:
                 if not sustain:
-                    s[int(time * fps)] = code
+                    s[int(time * constants.fps)] = code
                 else:
-                    s[int(time * fps):int(time1 * fps)] = code
+                    s[int(time * constants.fps):int(time1 * constants.fps)] = code
             else:
                 i = 0
                 t = time
                 while t < time1:
-                    s[int(t * fps)] = code
+                    s[int(t * constants.fps)] = code
                     if isinstance(step, float) or isinstance(step, int):
                         t += step
                     elif isinstance(step, tuple) or isinstance(step, list):
@@ -237,8 +325,8 @@ def sectionate(sections, *values):
             label1, time1 = next[0], next[1]
 
             if label.startswith(filter):
-                lo = int(fps * time)
-                hi = int(fps * time1)
+                lo = int(constants.fps * time)
+                hi = int(constants.fps * time1)
                 if isinstance(v, Iterable):
                     ret[lo:hi] = v[lo:hi]
                 elif isinstance(v, float) or isinstance(v, int):
@@ -274,7 +362,7 @@ def make_section_lin(like, sections, filter=None, step=None, processor=None):
 
         if filter is None or label == filter:
             if step is None:
-                s[int(time * fps)] = 1
+                s[int(time * constants.fps)] = 1
             else:
                 i = 0
                 t = time
@@ -292,8 +380,8 @@ def make_section_lin(like, sections, filter=None, step=None, processor=None):
                         v1 -= d
                         t = np.clip(t, time, time1)
 
-                    lo = int(l * fps)
-                    hi = int(t * fps)
+                    lo = int(l * constants.fps)
+                    hi = int(t * constants.fps)
 
                     l = np.round(hi - lo)
                     lin = np.linspace(v0, v1, int(l))

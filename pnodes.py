@@ -224,8 +224,6 @@ class JoinList(PromptNode):
         self.join_char = join_char
         self.join_num = join_num
 
-        self.join_num = 1
-
     def eval_text(self, t):
         if len(self.children) == 0:
             return self.text
@@ -233,6 +231,10 @@ class JoinList(PromptNode):
         children_by_w = sorted(self.children, key=lambda n: n.get_weight_at(t), reverse=True)
         top = children_by_w[0]
 
+        # TODO workaround, fix the actual problem
+        # if self.parent is not None and self.parent.parent is None:
+        #     self.join_num = 16
+        # print("JOIN_NUM", self.join_num)
         if self.join_num > 1:
             s = ''
             c = self.join_char
@@ -682,17 +684,18 @@ class WildcardNode(PromptNode):
             v = copy.copy(conf)
             v.children = copy.deepcopy(wc)
             if tiling:
-                tile_num = tiling[0]
-                tile_char = tiling[1]
+                tile_char = tiling[-1]
+                tile_num = int(tiling[:-1])
                 v.join_char = tile_char
                 v.join_num = int(tile_num)
+                print(v)
 
             return v
 
         # Match map \<\w+\>
         children = []
         i = 0
-        last_i = -1
+        last_i = 0
 
         def append_wc():
             nonlocal last_i
@@ -722,7 +725,8 @@ class WildcardNode(PromptNode):
 
         if children:
             append_text()
-            self.children = children
+            self.add_children(children)
+            # self.children = children
 
             for child in dfs(self):
                 if child.text and '<' in child.text and '>' in child.text:
@@ -754,19 +758,23 @@ def bake_prompt(prompt: str, wcconfs, globals):
 
 
 def eval_prompt(root, t):
-    has_fd = True
+    in_range = True
     for node in dfs(root):
+        # print("DFS", node)
         if node.timeline:
             try:
-                node.get_bake_at(t)
+                # TODO there is a glitch in ProportionSet where the last values are zero for ALL children, so for now we will buffer a few seconds in advance to avoid this
+                # print("CHECK+5")
+                node.get_bake_at(t+5)
             except:
-                has_fd = False
+                # print("FAILED")
+                in_range = False
                 break
 
-    if not has_fd:
+    if not in_range:
         # Extend the duration and rebake
-        constants.max_duration = t + 60
-        print(f"pnodes: extending max duration to {constants.max_duration:.02}s and rebaking")
+        constants.max_duration = t + 50
+        print(f"pnodes: extending max duration to {constants.max_duration:.02f}s and rebaking")
 
         bake(root)
 
