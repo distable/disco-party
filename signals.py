@@ -142,7 +142,7 @@ VRNodes = {
 
 VRNodes_ID = dict(reversed(it) for it in VRNodes.items())
 
-def load_vr(path):
+def load_vr(path, beta=0.5):
     if not os.path.exists(path):
         raise Exception(f"VR recording does not exist at {path}")
 
@@ -168,12 +168,49 @@ def load_vr(path):
             d2 = resampy.resample(d2, rec.samples_per_second, constants.fps)
             d3 = resampy.resample(d3, rec.samples_per_second, constants.fps)
 
-            vrinput = VRInput(VRNodes_ID[itype], modality, d1, d2, d3)
+            d1 = smooth_1euro(d1, beta=beta)
+            d2 = smooth_1euro(d2, beta=beta)
+            d3 = smooth_1euro(d3, beta=beta)
+
+            nodeid = VRNodes_ID[itype]
+            vrinput = VRInput(nodeid, modality, d1, d2, d3)
+
+            if nodeid in ['HeadRot', 'LRot', 'RRot']:
+                fix_vr_angles(vrinput)
 
             rec.inputs.append(vrinput)
-            rec.nodes[VRNodes_ID[itype]] = vrinput
+            rec.nodes[nodeid] = vrinput
 
         return rec
+
+# Calculate the delta angles for each time step
+# TODO move this to where we load the vr data
+def fix_vr_angles(node):
+    for i in range(1, node.d3.shape[0]):
+        delta_d1 = node.d1[i] - node.d1[i - 1]
+        delta_d2 = node.d2[i] - node.d2[i - 1]
+        delta_d3 = node.d3[i] - node.d3[i - 1]
+
+        # Handle the case where there is a jump from 360 to 0 degrees
+        if delta_d1 > 180:
+            delta_d1 -= 360
+        elif delta_d1 < -180:
+            delta_d1 += 360
+
+        if delta_d2 > 180:
+            delta_d2 -= 360
+        elif delta_d2 < -180:
+            delta_d2 += 360
+
+        if delta_d3 > 180:
+            delta_d3 -= 360
+        elif delta_d3 < -180:
+            delta_d3 += 360
+
+        node.dd1[i] = delta_d1
+        node.dd2[i] = delta_d2
+        node.dd3[i] = delta_d3
+
 
 
 # think I'm gonna use head pose estimation instead... it falls apart past 45deg but at least it's darn accurate under that

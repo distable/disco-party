@@ -453,10 +453,8 @@ def blur(arr, n_iter=20, mask=None):
     return lerp(original, arr, mask)
 
 
-def smooth_1euro(x):
-    end = 4 * np.pi
-    min_cutoff = 0.004
-    beta = 0.7
+def smooth_1euro(x, min_cutoff=0.004, beta=0.7):
+    end = x.shape[0]
 
     x_noisy = x
     x_hat = np.zeros_like(x_noisy)
