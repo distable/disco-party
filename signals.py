@@ -8,12 +8,14 @@ from collections.abc import Iterable
 import resampy
 from scipy.signal import decimate
 
+from classes.printlib import trace_decorator
 from . import constants
 # Assign these
 from .maths import *
 # from .constants import *
 
 
+@trace_decorator
 def load_pose_frames(path, joint: Union[int, tuple], original_fps=29.89):
     # Average out multiple keypoints for overall movement
     if isinstance(joint, tuple):
@@ -51,16 +53,19 @@ def load_pose_frames(path, joint: Union[int, tuple], original_fps=29.89):
     return x, y
 
 
+@trace_decorator
 def load_dpose_frames(path, joint, original_fps=29.89):
     x, y = load_pose_frames(path, joint)
     return np.diff(x), np.diff(y)
 
 
+@trace_decorator
 def load_dheadrot_frames(path, original_fps=29.89):
     rx, ry, rz = load_headrot_frames(path, original_fps)
     return np.diff(rx), np.diff(ry), np.diff(rz)
 
 
+@trace_decorator
 def load_headrot_frames(path, original_fps=29.89):
     with open(path, 'r') as file:
         o = json.load(file)
@@ -142,7 +147,8 @@ VRNodes = {
 
 VRNodes_ID = dict(reversed(it) for it in VRNodes.items())
 
-def load_vr(path, beta=0.5):
+@trace_decorator
+def load_vr(path, beta=0.5, min_cutoff=0.004, one_euro=True):
     if not os.path.exists(path):
         raise Exception(f"VR recording does not exist at {path}")
 
@@ -168,15 +174,16 @@ def load_vr(path, beta=0.5):
             d2 = resampy.resample(d2, rec.samples_per_second, constants.fps)
             d3 = resampy.resample(d3, rec.samples_per_second, constants.fps)
 
-            d1 = smooth_1euro(d1, beta=beta)
-            d2 = smooth_1euro(d2, beta=beta)
-            d3 = smooth_1euro(d3, beta=beta)
+            if one_euro:
+                d1 = smooth_1euro(d1, min_cutoff, beta=beta)
+                d2 = smooth_1euro(d2, min_cutoff, beta=beta)
+                d3 = smooth_1euro(d3, min_cutoff, beta=beta)
 
             nodeid = VRNodes_ID[itype]
             vrinput = VRInput(nodeid, modality, d1, d2, d3)
 
-            if nodeid in ['HeadRot', 'LRot', 'RRot']:
-                fix_vr_angles(vrinput)
+            # if nodeid in ['HeadRot', 'LRot', 'RRot']:
+            #     fix_vr_angles(vrinput)
 
             rec.inputs.append(vrinput)
             rec.nodes[nodeid] = vrinput
@@ -185,6 +192,7 @@ def load_vr(path, beta=0.5):
 
 # Calculate the delta angles for each time step
 # TODO move this to where we load the vr data
+@trace_decorator
 def fix_vr_angles(node):
     for i in range(1, node.d3.shape[0]):
         delta_d1 = node.d1[i] - node.d1[i - 1]
@@ -234,6 +242,7 @@ def fix_vr_angles(node):
 #
 #     return (wavg(degree, 0.035))
 
+@trace_decorator
 def load_midibucket_frames(path, as_numpy=False):
     mid = mido.MidiFile(path)
 
@@ -282,6 +291,7 @@ def load_midibucket_frames(path, as_numpy=False):
     return ret
 
 
+@trace_decorator
 def load_midi_frames(path):
     print(path)
     mid = mido.MidiFile(path)
@@ -310,6 +320,7 @@ def load_midi_frames(path):
     return frames
 
 
+@trace_decorator
 def make_temporal_markers(like, measure_duration, start=0.0, end=np.inf):
     s = np.zeros_like(like)
     for ts in np.arange(start * constants.fps, np.min((end, s.shape[0])), measure_duration * constants.fps):
@@ -317,6 +328,7 @@ def make_temporal_markers(like, measure_duration, start=0.0, end=np.inf):
     return s
 
 
+@trace_decorator
 def make_msec(like, sections, filter=None, step=None, coded=True, sustain=False):
     s = np.zeros_like(like)
     labels = list(set([x[0] for x in sections]))
@@ -350,6 +362,7 @@ def make_msec(like, sections, filter=None, step=None, coded=True, sustain=False)
     return s
 
 
+@trace_decorator
 def sectionate(sections, *values):
     ret = np.copy(values[0][1])
     for vpair in values:
@@ -372,22 +385,27 @@ def sectionate(sections, *values):
     return ret
 
 
+@trace_decorator
 def make_linsec01(like, sections, filter=None, step=None):
     return make_section_lin(like, sections, filter, step)
 
 
+@trace_decorator
 def make_linsec10(like, sections, filter=None, step=None):
     return make_section_lin(like, sections, filter, step, lambda v: 1 - v)
 
 
+@trace_decorator
 def make_linsec010(like, sections, filter=None, step=None):
     return make_section_lin(like, sections, filter, step, lambda v: 1 - (np.abs(v - 0.5) * 2))
 
 
+@trace_decorator
 def make_linsec101(like, sections, filter=None, step=None):
     return make_section_lin(like, sections, filter, step, lambda v: np.abs(v - 0.5) * 2)
 
 
+@trace_decorator
 def make_section_lin(like, sections, filter=None, step=None, processor=None):
     s = np.zeros_like(like)
     for isec in range(len(sections) - 1):  # we expect an end marker at the very end

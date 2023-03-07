@@ -146,6 +146,13 @@ def rngi(min=None, max=None):
         return random.randint(min, max)
 
 
+def rngn(factor):
+    if factor > 0:
+        return rng(1, 1 + factor)
+    else:
+        return rng(1 - factor, 1)
+
+
 def val_or_range(v, max=None):
     if isinstance(v, list) or isinstance(v, tuple):
         return random.uniform(v[0], v[1])
@@ -382,6 +389,7 @@ def pdiff(x):
     v = np.diff(x)
     v = np.append(v, v[-1])
     return v
+
 
 def absdiff(x):
     return abs(pdiff(x))

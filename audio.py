@@ -3,6 +3,7 @@ import soundfile as sfile
 from pathlib import Path
 import pandas as pd
 
+from classes.printlib import trace_decorator
 from . import constants
 from .maths import *
 
@@ -10,12 +11,14 @@ from .maths import *
 # TODO harmonic chg speed
 
 
+@trace_decorator
 def load_crepe_keyframes(filename):
     df = pd.read_csv(filename)
     freq = to_keyframes(df['frequency'], len(df['frequency']) / df['time'].values[-1])
     confidence = to_keyframes(df['confidence'], len(df['frequency']) / df['time'].values[-1])
     return freq, confidence
 
+@trace_decorator
 def load_harmonics(filename):
     import librosa
     from src_plugins.disco_party.keyfinder import Tonal_Fragment
@@ -37,16 +40,19 @@ def load_harmonics(filename):
     unebarque_fsharp_min.chromagram("Une Barque sur l\'Ocean")
 
 
-def load_dbnorm_keyframes(filename, window=None, caching=True):
+@trace_decorator
+def load_dbnorm(filename, window=None, caching=True):
     window = window if window is None else window * constants.fps
     return norm(load_db_keyframes(filename, caching), window=window)
 
 
+@trace_decorator
 def load_db_keyframes(filename, caching=True):
     audio, dbs = load_db(filename, caching)
     return to_keyframes(dbs, audio.frame_rate)
 
 
+@trace_decorator
 def load_db(filename, caching=True):
     audio = AudioSegment.from_file(filename)
 
@@ -74,6 +80,7 @@ def load_db(filename, caching=True):
     return audio, decibels
 
 
+@trace_decorator
 def to_keyframes(dbs, original_sps):
     start = 0
     total_seconds = len(dbs) / original_sps
@@ -96,6 +103,7 @@ def to_keyframes(dbs, original_sps):
     return smooth_1euro(dt)
 
 
+@trace_decorator
 def convert_to_decibel(arr):
     ref = 1
     if arr != 0:
@@ -105,6 +113,7 @@ def convert_to_decibel(arr):
         return -60
 
 
+@trace_decorator
 def play_wav(audioseg, t):
     import simpleaudio
     if t is not None:
