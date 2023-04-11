@@ -3,7 +3,7 @@ import soundfile as sfile
 from pathlib import Path
 import pandas as pd
 
-from classes.printlib import trace_decorator
+from src_core.classes.printlib import trace_decorator
 from . import constants
 from .maths import *
 
@@ -70,7 +70,10 @@ def load_db(filename, caching=True):
         samples_sf = signal[:, 0]  # use the first channel for dual
     except:
         samples_sf = signal  # for mono
-    decibels = [convert_to_decibel(i) for i in samples_sf]  # idk how to vectorize this so it's a bit slow, I'm implementing caching for now
+
+    print(f"Converting {filename} to decibels...")
+    # decibels = [convert_to_decibel(i) for i in samples_sf]  # idk how to vectorize this so it's a bit slow, I'm implementing caching for now
+    decibels = convert_to_decibel(samples_sf)
 
     # Write the cache if enabled
     if caching:
@@ -103,15 +106,19 @@ def to_keyframes(dbs, original_sps):
     return smooth_1euro(dt)
 
 
+# @trace_decorator
+# def convert_to_decibel(arr):
+#     ref = 1
+#     if arr != 0:
+#         return 20 * np.log10(np.abs(arr) / ref)
+#     else:
+#         return -60
+
 @trace_decorator
 def convert_to_decibel(arr):
     ref = 1
-    if arr != 0:
-        return 20 * np.log10(np.abs(arr) / ref)
-
-    else:
-        return -60
-
+    decibel = np.where(arr != 0, 20 * np.log10(np.abs(arr) / ref), -60)
+    return decibel
 
 @trace_decorator
 def play_wav(audioseg, t):

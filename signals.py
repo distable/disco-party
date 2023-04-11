@@ -8,7 +8,7 @@ from collections.abc import Iterable
 import resampy
 from scipy.signal import decimate
 
-from classes.printlib import trace_decorator
+from src_core.classes.printlib import trace_decorator
 from . import constants
 # Assign these
 from .maths import *
