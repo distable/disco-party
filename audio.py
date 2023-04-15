@@ -103,7 +103,12 @@ def to_keyframes(dbs, original_sps):
         d = dbs[int(t * original_sps):int((t1) * original_sps)]
         dt[i] = np.mean(d)
 
-    return smooth_1euro(dt)
+        # remove infinities and nans
+        if np.isinf(dt[i]) or np.isnan(dt[i]):
+            dt[i] = dt[i-1]
+
+    return dt
+    # return smooth_1euro(dt)
 
 
 # @trace_decorator

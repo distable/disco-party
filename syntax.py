@@ -2,7 +2,7 @@
 
 import sys
 
-from PyQt5 import QtGui, QtCore
+from PyQt6 import QtGui, QtCore
 
 
 def format(color, style=''):
