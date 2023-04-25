@@ -108,7 +108,7 @@ class VRRecording:
         if name in self.nodes:
             return self.nodes[name]
         else:
-            return getattr(self, name)
+            return self.__dict__.get(name)
 
 
 class VRInput:

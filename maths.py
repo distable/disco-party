@@ -11,6 +11,8 @@ from numpy.lib.stride_tricks import sliding_window_view
 from opensimplex import OpenSimplex
 from scipy.ndimage import uniform_filter1d
 
+from src_plugins.disco_party import constants
+
 # import pytti
 simplex = OpenSimplex(random.randint(-999999, 9999999))
 math_env = {}
@@ -38,6 +40,10 @@ def update_math_env(k, v):
 SEED_MAX = 2 ** 32 - 1
 
 cached_simplex = {}
+counters = {}
+
+def set_counters():
+    counters.clear()
 
 
 def set_seed(seed=None, with_torch=True):
@@ -210,16 +216,34 @@ def remap(v, a, b, x, y):
 
 
 def sign(v):
-    return copysign(1, v)
+    return np.sign(v)
 
 
 def stsin(t, a, p, w):
-    return sign(sin(t / p * pi)) * sin(t / p * pi) ** w * a
+    return abs(np.sin(t / p * pi) ** w * a) #* sign(np.sin(t / p * pi))
 
 
 def stcos(t, a, p, w):
-    return sign(cos(t / p * pi)) * cos(t / p * pi) ** w * a
+    return sign(cos(t / p)) * cos(t / p) ** w * a
 
+def sin(t):
+    return np.sin(t*tau)
+
+def cos(t):
+    return np.cos(t*tau)
+
+def get_size():
+    return int(constants.max_duration * constants.fps)
+
+def sin01(a, p, w, size=None):
+    if size is None:
+        size = get_size()
+    t = np.linspace(0, tau*size/constants.fps/p, size)
+    return (0.5 + 0.5 * np.sin(t)) ** w * a
+
+def cos01(a, p, w, num):
+    t = np.linspace(0, tau*p, num)
+    return (0.5 + 0.5 * np.cos(t)) ** w * a
 
 def swave(t):
     return 1
@@ -238,11 +262,11 @@ def cosb(t, a=1, p=1, o=0):
 
 
 def sin1(t, a=1, p=1, o=0):
-    return (sin(((t / p) - o) * pi) * .5 + .5) * a
+    return (sin((t / p) - o) * .5 + .5) * a
 
 
 def cos1(t, a=1, p=1, o=0):
-    return (cos(((t / p) - o) * pi) * .5 + .5) * a
+    return (cos((t / p) - o) * .5 + .5) * a
 
 
 def tsigmoid(x, k=0.3, norm_window=None):
@@ -278,12 +302,34 @@ def srcurve(v, a=0.3, b=0.3, norm=None):
 def jrcurve(v, a=0.3, b=0.3, norm=None):
     return rcurve(rcurve(v, a, norm), b)
 
+def perlin01(freq=1.0, lo=0, hi=1)->ndarray:
+    t = np01(get_size())
+    nperlin = (perlin(t, freq) + 1) * 0.5
+    if 'perlin01' not in counters:
+        counters['perlin01'] = 0
+    counters['perlin01'] += 1
+    t += counters['perlin01']
+    return nperlin * (hi - lo) + lo
 
-def perlin(t, freq=1.0):
-    return simplex.noise2(t * freq, 0)
+def perlin(t, freq=1.0)-> ndarray | float:
+    if isinstance(t, ndarray):
+        return npperlin(t.shape[0], freq)
+    else:
+        return simplex.noise2(t * freq, 0)
 
+def max(a, b):
+    return np.maximum(a, b)
 
-def npperlin(count, freq=1, off=0):
+def schedule(schedule, size)->ndarray:
+    return np.resize(schedule, size)
+
+def np01(size)->ndarray:
+    return np.linspace(0, 1, size)
+
+def np0(hi, size)->ndarray:
+    return np.linspace(0, hi, size)
+
+def npperlin(count, freq=1.0, off=0)->ndarray:
     if isinstance(count, ndarray):
         count = count.shape[0]
 
@@ -293,9 +339,18 @@ def npperlin(count, freq=1, off=0):
     return ret
 
 
-def npperlin_like(ar, freq=1, off=0):
+def npperlin_like(ar, freq=1, off=0)->ndarray:
     return npperlin(ar.shape[0], freq, off)
 
+def nprng(lo=0, hi=1)->ndarray:
+    return np.random.uniform(lo, hi, get_size())
+
+def iszero(arr):
+    if arr is None:
+        return True
+    if isinstance(arr, ndarray):
+        return np.count_nonzero(arr) == 0
+    return arr == 0
 
 def clamp(v, lo, hi):
     return np.clip(v, lo, hi)
@@ -381,8 +436,8 @@ def schedule_spk(v, t):
     return sum
 
 
-def schedule(*args):
-    return args[f % len(args)]
+# def schedule(*args):
+#     return args[f % len(args)]
 
 
 def pdiff(x):
@@ -412,6 +467,7 @@ def norm(x, window=None, symmetric=False):
 def exnorm(x, window=None, symmetric=False):
     if window is not None:
         window = int(window)
+        window = min(window, len(x))
 
         lo = np.min(sliding_window_view(x, window_shape=window), axis=1)
         hi = np.max(sliding_window_view(x, window_shape=window), axis=1)
@@ -427,7 +483,8 @@ def exnorm(x, window=None, symmetric=False):
         lo = -b
         hi = b
 
-    return (x - lo) / (hi - lo), lo, hi
+    ret = (x - lo) / (hi - lo), lo, hi
+    return np.nan_to_num(ret)
 
 
 def stretch(array: np.ndarray, new_len: int) -> np.ndarray:

@@ -1,8 +1,11 @@
+import librosa
 from pydub import AudioSegment
 import soundfile as sfile
 from pathlib import Path
 import pandas as pd
 
+from audio_processing.modules.loudness import lufs_meter
+from audio_processing.modules import filter
 from src_core.classes.printlib import trace_decorator
 from . import constants
 from .maths import *
@@ -43,44 +46,89 @@ def load_harmonics(filename):
 @trace_decorator
 def load_dbnorm(filename, window=None, caching=True):
     window = window if window is None else window * constants.fps
-    return norm(load_db_keyframes(filename, caching), window=window)
+    return load_db_keyframes(filename, caching)
 
 
 @trace_decorator
 def load_db_keyframes(filename, caching=True):
-    audio, dbs = load_db(filename, caching)
-    return to_keyframes(dbs, audio.frame_rate)
+    dbs = load_db(filename, caching)
+    return dbs
+    # return to_keyframes(dbs, audio.frame_rate)
 
 
 @trace_decorator
 def load_db(filename, caching=True):
-    audio = AudioSegment.from_file(filename)
+    print(f"Loading {filename}...")
 
     # Load the cache if enabled
     cachepath = Path(filename).with_suffix(".npy")
     if caching and cachepath.exists():
         print(f"Restoring cached decibels: {cachepath}")
-        return audio, np.load(cachepath.as_posix())
+        return np.load(cachepath.as_posix())
 
-    # Convert samples to decibels
-    signal, sr = sfile.read(filename)
-    samples = audio.get_array_of_samples()
-    samples_sf = 0
-    try:
-        samples_sf = signal[:, 0]  # use the first channel for dual
-    except:
-        samples_sf = signal  # for mono
+    # PYLOUDNORM
+    # ----------------------------------------
 
-    print(f"Converting {filename} to decibels...")
-    # decibels = [convert_to_decibel(i) for i in samples_sf]  # idk how to vectorize this so it's a bit slow, I'm implementing caching for now
-    decibels = convert_to_decibel(samples_sf)
+    import soundfile as sf
+    # import pyloudnorm as pyln
+
+    y, sr = sf.read(filename)  # load audio (with shape (samples, channels))
+    y = filter.butter(y, sr, 'highpass', 1, 400)
+
+    meter = lufs_meter(sr, 1/constants.fps, overlap=0)
+    loudness = meter.get_mlufs(y)
+    # loudness = meter.integrated_loudness(y)  # measure loudness
+
+
+    loudness[np.isinf(loudness)] = 0  # Replace infinities and nans with zero
+    loudness = norm(loudness)  # Normalize to 0-1 in a 12 second window
+
+    # ROSA
+    # ----------------------------------------
+
+    # y, sr = librosa.load(filename, sr=24)
+    #
+    # # Compute the spectrogram (magnitude)
+    # n_fft = 2048
+    # hop_length = 1024
+    # spec_mag = abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
+    #
+    # # Convert the spectrogram into dB
+    #
+    # # Compute A-weighting values
+    # freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
+    # a_weights = librosa.A_weighting(freqs)
+    # a_weights = np.expand_dims(a_weights, axis=1)
+    #
+    # # Apply the A-weghting to the spectrogram in dB
+    # spec_dba = spec_mag + a_weights
+    #
+    # # Compute the "loudness" value
+    # loudness = librosa.feature.rms(S=spec_dba)
+
+    # SHITTY
+    # ----------------------------------------
+
+    # # Convert samples to decibels
+    # signal, sr = sfile.read(filename)
+    # samples = audio.get_array_of_samples()
+    # samples_sf = 0
+    # try:
+    #     samples_sf = signal[:, 0]  # use the first channel for dual
+    # except:
+    #     samples_sf = signal  # for mono
+    #
+    # print(f"Converting {filename} to decibels...")
+    # # decibels = [convert_to_decibel(i) for i in samples_sf]  # idk how to vectorize this so it's a bit slow, I'm implementing caching for now
+    # decibels = convert_to_decibel(samples_sf)
+
 
     # Write the cache if enabled
     if caching:
-        print(f"Caching decibels: {cachepath}")
-        np.save(cachepath.as_posix(), decibels)
+        np.save(cachepath.as_posix(), loudness)
 
-    return audio, decibels
+    return loudness
+    # return audio, decibels
 
 
 @trace_decorator
@@ -105,7 +153,7 @@ def to_keyframes(dbs, original_sps):
 
         # remove infinities and nans
         if np.isinf(dt[i]) or np.isnan(dt[i]):
-            dt[i] = dt[i-1]
+            dt[i] = dt[i - 1]
 
     return dt
     # return smooth_1euro(dt)
